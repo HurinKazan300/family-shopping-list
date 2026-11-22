@@ -523,15 +523,29 @@ $("copyLink").addEventListener("click", async () => {
 $("shareLink").addEventListener("click", () => {
   navigator.share({ title: "わが家の買い物メモ", text: "家族の買い物メモです。このリンクから開いてください。", url: inviteUrl() }).catch(() => {});
 });
+// 保存する前に、キーが使えるかを Google に確かめる
 $("keySave").addEventListener("click", async () => {
   const key = $("keyInput").value.trim();
   if (!key) { toast("キーを入れてください"); return; }
+  const btn = $("keySave");
+  btn.disabled = true; btn.textContent = "確認中…";
+  $("keyState").textContent = "キーが使えるか確認しています…";
   try {
-    await setDoc(hhDoc, { geminiKey: key, updatedAt: serverTimestamp() }, { merge: true });
+    const model = await findModel(key);
+    setDoc(hhDoc, { geminiKey: key, geminiModel: model, updatedAt: serverTimestamp() }, { merge: true })
+      .catch(() => toast("キーを保存できませんでした。電波を確認してください"));
+    household.geminiKey = key; household.geminiModel = model;
     $("keyInput").value = "";
-    $("keyState").textContent = "保存しました。家族のスマホでもレシート読み取りが使えます。";
+    $("keyState").textContent = "キーを確認して保存しました。家族のスマホでもレシート読み取りが使えます。";
     $("keyMenuState").textContent = "キー設定済み";
-  } catch (e) { toast("保存できませんでした"); }
+    toast("キーを保存しました");
+  } catch (e) {
+    $("keyState").textContent = (e.code === "key"
+      ? "このキーは使えませんでした。コピーしたキーが正しいか確認してください。"
+      : "確認できませんでした。電波を確認して、もう一度お試しください。") + (e.detail ? `（くわしい内容: ${e.detail}）` : "");
+  } finally {
+    btn.disabled = false; btn.textContent = "保存";
+  }
 });
 
 /* ---------- レシート読み取り ---------- */
@@ -564,10 +578,42 @@ async function shrink(file) {
   return btoa(bin);
 }
 
-class ReadError extends Error { constructor(code) { super(code); this.code = code; } }
+class ReadError extends Error { constructor(code, detail) { super(code); this.code = code; this.detail = detail || ""; } }
 
-async function askGemini(b64, prompt, signal) {
-  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`, {
+const GEMINI_API = "https://generativelanguage.googleapis.com/v1beta";
+const MODEL_PREFS = [GEMINI_MODEL, "gemini-flash-latest", "gemini-2.5-flash", "gemini-2.0-flash"];
+
+async function googleError(res) {
+  try { const j = await res.json(); return `${res.status} ${j.error?.status || ""} ${j.error?.message || ""}`.trim(); }
+  catch (e) { return String(res.status); }
+}
+function errorFor(status, detail) {
+  if (status === 401 || status === 403 || (status === 400 && /api.?key/i.test(detail))) return new ReadError("key", detail);
+  if (status === 404) return new ReadError("model", detail);
+  if (status === 429) return new ReadError("rate", detail);
+  return new ReadError("server", detail);
+}
+async function gfetch(url, opts) {
+  try { return await fetch(url, opts); }
+  catch (e) { if (opts && opts.signal && opts.signal.aborted) throw e; throw new ReadError("network", String(e && e.message || e)); }
+}
+
+// このキーで使える Gemini のモデルを探す（モデル名が変わっても動くように）
+async function findModel(key) {
+  const res = await gfetch(`${GEMINI_API}/models?pageSize=1000`, { headers: { "x-goog-api-key": key } });
+  if (!res.ok) throw errorFor(res.status, await googleError(res));
+  const names = ((await res.json()).models || [])
+    .filter((m) => (m.supportedGenerationMethods || []).includes("generateContent"))
+    .map((m) => m.name.replace(/^models\//, ""));
+  const pick = MODEL_PREFS.find((n) => names.includes(n))
+    || names.find((n) => /flash/.test(n) && !/lite|tts|image|live|audio|embed|preview|exp/.test(n))
+    || names.find((n) => /flash/.test(n));
+  if (!pick) throw new ReadError("server", "使える Gemini のモデルが見つかりません");
+  return pick;
+}
+
+async function askGemini(b64, prompt, signal, model) {
+  const res = await gfetch(`${GEMINI_API}/models/${model}:generateContent`, {
     method: "POST",
     signal,
     headers: { "Content-Type": "application/json", "x-goog-api-key": household.geminiKey },
@@ -576,17 +622,14 @@ async function askGemini(b64, prompt, signal) {
       generationConfig: { responseMimeType: "application/json", temperature: 0 },
     }),
   });
-  if (!res.ok) {
-    if (res.status === 400 || res.status === 401 || res.status === 403) throw new ReadError("key");
-    if (res.status === 429) throw new ReadError("rate");
-    throw new ReadError("server");
-  }
+  if (!res.ok) throw errorFor(res.status, await googleError(res));
   const data = await res.json();
   const text = (data.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("");
+  if (!text) throw new ReadError("parse", "返事が空でした " + (data.candidates?.[0]?.finishReason || data.promptFeedback?.blockReason || ""));
   try {
     const m = text.match(/\[[\s\S]*\]/);
     return JSON.parse(m ? m[0] : text);
-  } catch (e) { throw new ReadError("parse"); }
+  } catch (e) { throw new ReadError("parse", text.slice(0, 120)); }
 }
 
 function closeReceipt() {
@@ -596,9 +639,10 @@ function closeReceipt() {
 }
 $("rcBack").addEventListener("click", (e) => { if (e.target === $("rcBack") && !rcCtl) closeReceipt(); });
 
-function showRetry(title, msg) {
+function showRetry(title, msg, detail) {
   $("rcTitle").textContent = title;
-  $("rcBody").innerHTML = `<p class="hint" style="font-size:.95rem;color:var(--ink)">${esc(msg)}</p>`;
+  $("rcBody").innerHTML = `<p class="hint" style="font-size:.95rem;color:var(--ink)">${esc(msg)}</p>` +
+    (detail ? `<p class="hint" style="margin-top:8px">くわしい内容: ${esc(detail)}</p>` : "");
   $("rcActions").innerHTML = `<button class="btn" type="button" id="rcClose">閉じる</button><button class="btn primary" type="button" id="rcRetry">撮り直す</button>`;
   $("rcClose").onclick = closeReceipt;
   $("rcRetry").onclick = () => { closeReceipt(); $("pickBack").hidden = false; };
@@ -639,7 +683,17 @@ async function readReceipt(file) {
   rcCtl = ctl;
   try {
     const b64 = await shrink(file);
-    const out = await askGemini(b64, prompt, ctl.signal);
+    let out;
+    try {
+      out = await askGemini(b64, prompt, ctl.signal, household.geminiModel || GEMINI_MODEL);
+    } catch (e) {
+      if (!(e instanceof ReadError) || e.code !== "model") throw e;
+      // モデル名が使えなかったので、使えるものを探してもう一度だけ試す
+      const model = await findModel(household.geminiKey);
+      household.geminiModel = model;
+      updateDoc(hhDoc, { geminiModel: model }).catch(() => {});
+      out = await askGemini(b64, prompt, ctl.signal, model);
+    }
     if (ctl.signal.aborted) return;
     rcCtl = null;
     const merged = new Map();
@@ -661,9 +715,11 @@ async function readReceipt(file) {
       key: "レシート読み取りのキーが正しくないようです。設定でキーを入れ直してください。",
       rate: "今日の無料の読み取り回数を使い切ったか、混み合っています。少し時間をおいてからもう一度お試しください。",
       parse: "うまく読み取れませんでした。レシート全体が写るように、明るい場所で撮り直してください。",
-      server: "読み取りサービスにつながりませんでした。少し待ってからもう一度お試しください。",
-    }[e && e.code] || "読み取りに失敗しました。電波を確認して、もう一度お試しください。";
-    showRetry("読み取れませんでした", msg);
+      server: "読み取りサービスでエラーが起きました。少し待ってからもう一度お試しください。",
+      model: "読み取りに使う AI が見つかりませんでした。",
+      network: "読み取りサービスにつながりませんでした。電波を確認してください。",
+    }[e && e.code] || "読み取りに失敗しました。もう一度お試しください。";
+    showRetry("読み取れませんでした", msg, e && (e.detail || (e.code ? "" : String(e.message || e))));
   }
 }
 
@@ -749,7 +805,11 @@ function openHousehold(id, isNew) {
   if (isNew) setDoc(hhDoc, { createdAt: serverTimestamp() }, { merge: true }).catch(() => {});
 
   const loadTimer = setTimeout(() => { if (!loaded) notice("リストにつながりません。電波のよい場所で開き直してください。"); }, 10000);
-  onSnapshot(hhDoc, (snap) => { household.geminiKey = (snap.data() || {}).geminiKey || ""; }, () => {});
+  onSnapshot(hhDoc, (snap) => {
+    const d = snap.data() || {};
+    household.geminiKey = d.geminiKey || "";
+    household.geminiModel = d.geminiModel || "";
+  }, () => {});
   onSnapshot(itemsCol, (snap) => {
     items = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((r) => r.name);
     loaded = true;
