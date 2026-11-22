@@ -95,6 +95,9 @@ button { cursor: pointer; }
 .stepper button { width: 42px; height: 42px; border-radius: 50%; border: 1px solid var(--line); background: var(--bg); font-size: 1.25rem; line-height: 1; display: grid; place-items: center; }
 .stepper button:active { background: var(--accent-soft); }
 .stepper button:disabled { opacity: .35; }
+.row .del { flex: none; width: 38px; height: 42px; border: 0; border-radius: 10px; background: none; color: var(--muted); display: grid; place-items: center; }
+.row .del svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.row .del:active { color: var(--danger); background: var(--bg); }
 .qty { min-width: 2.4em; text-align: center; font-weight: 700; font-size: 1.1rem; font-variant-numeric: tabular-nums; }
 mark { background: var(--accent-soft); color: inherit; border-radius: 3px; }
 
@@ -165,7 +168,8 @@ mark { background: var(--accent-soft); color: inherit; border-radius: 3px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } }
 
-.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(86px + env(safe-area-inset-bottom, 0px)); z-index: 30; background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 999px; font-size: .9rem; max-width: calc(100% - 32px); }
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(86px + env(safe-area-inset-bottom, 0px)); z-index: 30; background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 999px; font-size: .9rem; max-width: calc(100% - 32px); display: flex; align-items: center; gap: 14px; }
+.toastact { border: 0; background: none; color: var(--accent-soft); font-weight: 700; text-decoration: underline; padding: 4px 0; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -402,16 +406,27 @@ function render() {
             <button type="button" data-act="dec" aria-label="${esc(it.name)}を1つ減らす" ${q === 0 ? "disabled" : ""}>−</button>
             <span class="qty" aria-live="polite">${q}</span>
             <button type="button" data-act="inc" aria-label="${esc(it.name)}を1つ増やす">＋</button>
-          </div></div>`;
+          </div>
+          <button class="del" type="button" data-act="del" aria-label="${esc(it.name)}を削除">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>
+          </button></div>`;
       }).join("") + `</div></section>`;
   }).join("");
 }
 
 let toastTimer;
-function toast(msg) {
+// action = { label, run } を渡すと「元に戻す」などのボタンを付ける
+function toast(msg, action) {
   const el = $("toast");
-  el.textContent = msg; el.hidden = false;
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => { el.hidden = true; }, 2600);
+  el.textContent = msg;
+  if (action) {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "toastact"; b.textContent = action.label;
+    b.onclick = () => { el.hidden = true; action.run(); };
+    el.append(b);
+  }
+  el.hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { el.hidden = true; }, action ? 5000 : 2600);
 }
 function notice(html) { $("notice").innerHTML = html || ""; $("notice").hidden = !html; }
 
@@ -441,12 +456,24 @@ async function addOrMerge(name, qty, tag, brands = []) {
   return "added";
 }
 
+// すぐ消して、5秒間は「元に戻す」で同じ内容のまま戻せる
+function removeItem(it) {
+  if (!it) return;
+  const { id, ...data } = it;
+  deleteDoc(doc(itemsCol, id)).catch(() => toast("削除できませんでした。電波を確認してください"));
+  toast(`「${it.name}」を削除しました`, {
+    label: "元に戻す",
+    run: () => setDoc(doc(itemsCol, id), data).catch(() => toast("元に戻せませんでした")),
+  });
+}
+
 $("list").addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-act]");
   if (!btn) return;
   const id = btn.closest(".row").dataset.id;
   if (btn.dataset.act === "inc") bump(id, 1);
   else if (btn.dataset.act === "dec") bump(id, -1);
+  else if (btn.dataset.act === "del") removeItem(items.find((i) => i.id === id));
   else if (btn.dataset.act === "edit") openEdit(items.find((i) => i.id === id));
 });
 $("tagbar").addEventListener("click", (e) => {
@@ -496,7 +523,7 @@ $("fDelete").addEventListener("click", async () => {
   if (!editing) return;
   if (!delArmed) { delArmed = true; $("fDelete").classList.add("armed"); $("fDelete").textContent = "もう一度押すと削除します"; return; }
   const it = editing; closeEdit();
-  try { await deleteDoc(doc(itemsCol, it.id)); toast(`「${it.name}」を削除しました`); } catch (e) { toast("削除できませんでした"); }
+  removeItem(it);
 });
 $("editForm").addEventListener("submit", async (e) => {
   e.preventDefault();
