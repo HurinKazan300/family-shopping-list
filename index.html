@@ -138,6 +138,7 @@ mark { background: var(--accent-soft); color: inherit; border-radius: 3px; }
 .menurow:first-child { border-top: 0; }
 .menurow span { flex: 1; min-width: 0; display: grid; }
 .menurow small { color: var(--muted); font-size: .8rem; }
+.switch { flex: none; width: 24px; height: 24px; accent-color: var(--accent); }
 .menurow svg { width: 20px; height: 20px; fill: none; stroke: var(--muted); stroke-width: 2; flex: none; }
 .linkbox { font-family: var(--f-receipt); font-size: .78rem; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px; overflow-wrap: anywhere; user-select: all; }
 
@@ -282,6 +283,10 @@ mark { background: var(--accent-soft); color: inherit; border-radius: 3px; }
         <span><strong>レシート読み取り</strong><small id="keyMenuState">Gemini API キーの設定</small></span>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
       </button>
+      <label class="menurow" for="saveCamToggle">
+        <span><strong>カメラの写真を保存</strong><small>撮ったレシートを「ダウンロード」フォルダに保存して、あとで写真フォルダから選び直せるようにする（このスマホだけの設定）</small></span>
+        <input type="checkbox" id="saveCamToggle" class="switch">
+      </label>
     </div>
 
     <div class="field" id="panel-share" hidden>
@@ -564,7 +569,22 @@ function openSettings(panel) {
   $("setBack").hidden = false;
 }
 $("setBtn").addEventListener("click", () => openSettings());
-$("setMenu").addEventListener("click", (e) => { const r = e.target.closest(".menurow"); if (r) showPanel(r.dataset.panel); });
+$("setMenu").addEventListener("click", (e) => { const r = e.target.closest(".menurow"); if (r && r.dataset.panel) showPanel(r.dataset.panel); });
+
+// カメラで撮った写真を「ダウンロード」フォルダに保存する（このスマホだけの設定。最初はオン）
+const SAVE_CAM_KEY = "family-shopping-save-camera";
+const saveCamOn = () => lsGet(SAVE_CAM_KEY) !== "0";
+$("saveCamToggle").checked = saveCamOn();
+$("saveCamToggle").addEventListener("change", (e) => lsSet(SAVE_CAM_KEY, e.target.checked ? "1" : "0"));
+function saveToDevice(file, n) {
+  const d = new Date(), p = (x) => String(x).padStart(2, "0");
+  const name = `receipt-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}${n ? "-" + (n + 1) : ""}.jpg`;
+  const url = URL.createObjectURL(file);
+  const a = document.createElement("a");
+  a.href = url; a.download = name;
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
 $("setBackBtn").addEventListener("click", () => showPanel(null));
 $("setClose").addEventListener("click", () => { $("setBack").hidden = true; });
 $("setBack").addEventListener("click", (e) => { if (e.target === $("setBack")) $("setBack").hidden = true; });
@@ -605,8 +625,9 @@ const MAX_PHOTOS = 3;
 let staged = [];          // 読み取る前に選んだ写真（長いレシートは分けて撮れる）
 let rcFiles = [];         // 最後に読み取った写真（ていねいに読み直す用）
 let rcRows = [], rcCount = null, rcCtl = null, rcUrls = [];
+let stagedFromCamera = false, rcFromCamera = false;
 
-$("receiptBtn").addEventListener("click", () => { staged = []; $("pickBack").hidden = false; });
+$("receiptBtn").addEventListener("click", () => { staged = []; stagedFromCamera = false; $("pickBack").hidden = false; });
 $("pickCancel").addEventListener("click", () => { $("pickBack").hidden = true; });
 $("pickBack").addEventListener("click", (e) => { if (e.target === $("pickBack")) $("pickBack").hidden = true; });
 $("pickCamera").addEventListener("click", () => { $("pickBack").hidden = true; $("cameraInput").click(); });
@@ -616,6 +637,13 @@ for (const id of ["cameraInput", "galleryInput"]) {
     const files = [...(e.target.files || [])];
     e.target.value = "";
     if (!files.length) { if (staged.length) showStaged(); return; }
+    if (id === "cameraInput") {
+      stagedFromCamera = true;
+      if (saveCamOn()) {
+        files.forEach((f, i) => saveToDevice(f, files.length > 1 ? i : 0));
+        toast("撮った写真を「ダウンロード」フォルダに保存しました");
+      }
+    }
     staged = [...staged, ...files].slice(0, MAX_PHOTOS);
     showStaged();
   });
@@ -637,7 +665,12 @@ function closeStaged() { $("stageBack").hidden = true; revokeUrls(); }
 $("stageCamera").addEventListener("click", () => { $("stageBack").hidden = true; $("cameraInput").click(); });
 $("stageGallery").addEventListener("click", () => { $("stageBack").hidden = true; $("galleryInput").click(); });
 $("stageCancel").addEventListener("click", () => { staged = []; closeStaged(); });
-$("stageRead").addEventListener("click", () => { const f = staged; staged = []; closeStaged(); readReceipt(f, false); });
+$("stageRead").addEventListener("click", () => { const f = staged; staged = []; rcFromCamera = stagedFromCamera; closeStaged(); readReceipt(f, false); });
+
+// 読み取れなかったとき、保存しておいた写真などを写真フォルダから選び直す
+function repickFromFolder() { closeReceipt(); staged = []; stagedFromCamera = false; $("galleryInput").click(); }
+const savedHint = () => rcFromCamera && saveCamOn()
+  ? `<p class="hint" style="margin-top:8px">カメラで撮った写真は「ダウンロード」フォルダに保存してあります。「写真フォルダから選ぶ」で選び直すと、読み取れることがあります。</p>` : "";
 
 // カメラの写真は横倒しの画素に「向き」の情報（EXIF）が付いているので、その向きに直して読み込む
 async function loadUpright(file) {
@@ -798,10 +831,12 @@ $("rcBack").addEventListener("click", (e) => { if (e.target === $("rcBack") && !
 function showRetry(title, msg, detail) {
   $("rcTitle").textContent = title;
   $("rcBody").innerHTML = `<p class="hint" style="font-size:.95rem;color:var(--ink)">${esc(msg)}</p>` +
+    savedHint() +
     (detail ? `<p class="hint" style="margin-top:8px">くわしい内容: ${esc(detail)}</p>` : "");
-  $("rcActions").innerHTML = `<button class="btn" type="button" id="rcClose">閉じる</button><button class="btn primary" type="button" id="rcRetry">撮り直す</button>`;
+  $("rcActions").innerHTML = `<button class="btn" type="button" id="rcRetry">撮り直す</button><button class="btn primary" type="button" id="rcFolder">写真フォルダから選ぶ</button><button class="btn" type="button" id="rcClose" style="grid-column:1/-1">閉じる</button>`;
   $("rcClose").onclick = closeReceipt;
-  $("rcRetry").onclick = () => { closeReceipt(); staged = []; $("pickBack").hidden = false; };
+  $("rcFolder").onclick = repickFromFolder;
+  $("rcRetry").onclick = () => { closeReceipt(); staged = []; stagedFromCamera = false; $("pickBack").hidden = false; };
 }
 
 async function readReceipt(files, careful) {
@@ -915,9 +950,11 @@ function showReceiptResult(careful) {
       ${r.raw ? `<div class="rraw">レシート: ${esc(r.raw)}</div>` : ""}
       <div class="rmeta"><select data-k="tag" aria-label="タグ">${tags.map((t) => `<option${t === r.tag ? " selected" : ""}>${esc(t)}</option>`).join("")}</select><span class="rb">${rcBadge(r)}</span></div>
     </div>`).join("") + `</div>` +
-    (careful ? "" : `<button class="btn" type="button" id="rcAgain" style="width:100%;margin-top:12px">ていねいに読み直す（30秒ほど）</button>`);
+    (careful ? "" : `<button class="btn" type="button" id="rcAgain" style="width:100%;margin-top:12px">ていねいに読み直す（30秒ほど）</button>`) +
+    `<button class="btn" type="button" id="rcFolder2" style="width:100%;margin-top:8px">写真フォルダから選び直す</button>` + savedHint();
   const again = $("rcAgain");
   if (again) again.onclick = () => readReceipt(rcFiles, true);
+  $("rcFolder2").onclick = repickFromFolder;
   paintCount();
   paintRcActions();
 }
