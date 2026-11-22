@@ -129,6 +129,13 @@ mark { background: var(--accent-soft); color: inherit; border-radius: 3px; }
 .stack { display: grid; gap: 10px; }
 .hint { font-size: .82rem; color: var(--muted); margin: 0; }
 .hint a { color: var(--accent); }
+.sethead { display: flex; align-items: center; gap: 10px; }
+.menu { border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+.menurow { width: 100%; display: flex; align-items: center; gap: 10px; text-align: left; background: var(--surface); border: 0; border-top: 1px solid var(--line); padding: 14px; }
+.menurow:first-child { border-top: 0; }
+.menurow span { flex: 1; min-width: 0; display: grid; }
+.menurow small { color: var(--muted); font-size: .8rem; }
+.menurow svg { width: 20px; height: 20px; fill: none; stroke: var(--muted); stroke-width: 2; flex: none; }
 .linkbox { font-family: var(--f-receipt); font-size: .78rem; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px; overflow-wrap: anywhere; user-select: all; }
 
 /* receipt slip */
@@ -234,8 +241,25 @@ mark { background: var(--accent-soft); color: inherit; border-radius: 3px; }
 
 <div class="backdrop" id="setBack" hidden>
   <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="setTitle">
-    <h3 id="setTitle">設定</h3>
-    <div class="field"><span>家族を招待</span>
+    <div class="sethead">
+      <button class="iconbtn" type="button" id="setBackBtn" aria-label="設定の一覧にもどる" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+      </button>
+      <h3 id="setTitle">設定</h3>
+    </div>
+
+    <div class="menu" id="setMenu">
+      <button class="menurow" type="button" data-panel="share">
+        <span><strong>家族と共有</strong><small>招待リンクを送って、同じリストを一緒に使う</small></span>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+      </button>
+      <button class="menurow" type="button" data-panel="key">
+        <span><strong>レシート読み取り</strong><small id="keyMenuState">Gemini API キーの設定</small></span>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+      </button>
+    </div>
+
+    <div class="field" id="panel-share" hidden>
       <p class="hint">このリンクを家族に送って開いてもらうと、同じリストを一緒に使えます。リンクを知っている人は誰でも見たり書いたりできるので、家族以外には送らないでください。</p>
       <div class="linkbox" id="inviteLink"></div>
       <div class="actions">
@@ -243,7 +267,8 @@ mark { background: var(--accent-soft); color: inherit; border-radius: 3px; }
         <button class="btn primary" type="button" id="shareLink">LINEなどで送る</button>
       </div>
     </div>
-    <div class="field"><span>レシート読み取りのキー（Gemini API キー）</span>
+
+    <div class="field" id="panel-key" hidden>
       <p class="hint">一度入れると家族全員のスマホで使えます。キーは <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a> で無料で作れます。</p>
       <div class="inline">
         <input id="keyInput" type="password" placeholder="AIza で始まる文字列" autocomplete="off" aria-label="Gemini API キー">
@@ -251,6 +276,7 @@ mark { background: var(--accent-soft); color: inherit; border-radius: 3px; }
       </div>
       <p class="hint" id="keyState"></p>
     </div>
+
     <button class="btn" type="button" id="setClose">閉じる</button>
   </div>
 </div>
@@ -467,14 +493,27 @@ $("addBtn").addEventListener("click", () => openEdit(null));
 
 /* ---------- 設定・招待 ---------- */
 const inviteUrl = () => location.origin + location.pathname + "#h=" + household.id;
-function openSettings() {
+const PANEL_TITLES = { share: "家族と共有", key: "レシート読み取り" };
+function showPanel(name) {
+  $("setMenu").hidden = !!name;
+  $("setBackBtn").hidden = !name;
+  $("panel-share").hidden = name !== "share";
+  $("panel-key").hidden = name !== "key";
+  $("setTitle").textContent = name ? PANEL_TITLES[name] : "設定";
+}
+// panel を渡すと、その項目を直接開く
+function openSettings(panel) {
   $("inviteLink").textContent = inviteUrl();
   $("shareLink").hidden = !navigator.share;
   $("keyInput").value = "";
   $("keyState").textContent = household.geminiKey ? "キーは保存済みです（変えるときだけ入れ直してください）。" : "まだキーが入っていません。";
+  $("keyMenuState").textContent = household.geminiKey ? "キー設定済み" : "キーが未設定です";
+  showPanel(typeof panel === "string" ? panel : null);
   $("setBack").hidden = false;
 }
-$("setBtn").addEventListener("click", openSettings);
+$("setBtn").addEventListener("click", () => openSettings());
+$("setMenu").addEventListener("click", (e) => { const r = e.target.closest(".menurow"); if (r) showPanel(r.dataset.panel); });
+$("setBackBtn").addEventListener("click", () => showPanel(null));
 $("setClose").addEventListener("click", () => { $("setBack").hidden = true; });
 $("setBack").addEventListener("click", (e) => { if (e.target === $("setBack")) $("setBack").hidden = true; });
 $("copyLink").addEventListener("click", async () => {
@@ -491,20 +530,14 @@ $("keySave").addEventListener("click", async () => {
     await setDoc(hhDoc, { geminiKey: key, updatedAt: serverTimestamp() }, { merge: true });
     $("keyInput").value = "";
     $("keyState").textContent = "保存しました。家族のスマホでもレシート読み取りが使えます。";
+    $("keyMenuState").textContent = "キー設定済み";
   } catch (e) { toast("保存できませんでした"); }
 });
 
 /* ---------- レシート読み取り ---------- */
 let rcRows = [], rcCtl = null, rcPreviewUrl = null;
 
-$("receiptBtn").addEventListener("click", () => {
-  if (!household.geminiKey) {
-    toast("先に設定でレシート読み取りのキーを入れてください");
-    openSettings();
-    return;
-  }
-  $("pickBack").hidden = false;
-});
+$("receiptBtn").addEventListener("click", () => { $("pickBack").hidden = false; });
 $("pickCancel").addEventListener("click", () => { $("pickBack").hidden = true; });
 $("pickBack").addEventListener("click", (e) => { if (e.target === $("pickBack")) $("pickBack").hidden = true; });
 $("pickCamera").addEventListener("click", () => { $("pickBack").hidden = true; $("cameraInput").click(); });
@@ -572,6 +605,15 @@ function showRetry(title, msg) {
 }
 
 async function readReceipt(file) {
+  if (!household.geminiKey) {
+    $("rcTitle").textContent = "読み取りの準備がまだです";
+    $("rcBody").innerHTML = `<p class="hint" style="font-size:.95rem;color:var(--ink)">レシートを読み取るには、右上の歯車 →「レシート読み取り」でキーを1回だけ入れてください。</p>`;
+    $("rcActions").innerHTML = `<button class="btn" type="button" id="rcClose">閉じる</button><button class="btn primary" type="button" id="rcGoKey">キーを入れる</button>`;
+    $("rcClose").onclick = closeReceipt;
+    $("rcGoKey").onclick = () => { closeReceipt(); openSettings("key"); };
+    $("rcBack").hidden = false;
+    return;
+  }
   rcPreviewUrl = URL.createObjectURL(file);
   $("rcTitle").textContent = "レシートを読み取っています";
   $("rcBody").innerHTML = `<div class="reading"><img class="preview" src="${rcPreviewUrl}" alt="撮影したレシート"><div style="display:flex;gap:10px;align-items:center"><span class="spinner"></span><span>買ったものを探しています。10〜30秒ほどかかります。</span></div></div>`;
@@ -719,7 +761,7 @@ function openHousehold(id, isNew) {
     notice("リストを読み込めませんでした。招待リンクが正しいか確認してください。");
     render();
   });
-  if (isNew) setTimeout(() => { notice(`リストを作りました。<button type="button" id="goInvite">家族を招待する</button>`); const b = $("goInvite"); if (b) b.onclick = openSettings; }, 600);
+  if (isNew) setTimeout(() => { notice(`リストを作りました。<button type="button" id="goInvite">家族を招待する</button>`); const b = $("goInvite"); if (b) b.onclick = () => openSettings("share"); }, 600);
 }
 
 (async function start() {
