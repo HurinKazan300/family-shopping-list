@@ -179,12 +179,10 @@ mark { background: var(--accent-soft); color: inherit; border-radius: 3px; }
 .histtable td { padding: 6px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
 .histtable td.num, .histtable th.num { text-align: right; white-space: nowrap; }
 .histtable .sub { display: block; color: var(--muted); font-size: .72rem; }
-.receipt-rec { border: 1px solid var(--line); border-radius: var(--r); margin-bottom: 10px; overflow: hidden; }
-.receipt-rec summary { list-style: none; display: flex; justify-content: space-between; gap: 10px; padding: 12px 14px; cursor: pointer; }
-.receipt-rec summary::-webkit-details-marker { display: none; }
-.receipt-rec summary small { display: block; color: var(--muted); font-size: .78rem; }
-.receipt-rec summary .tot { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.receipt-rec .body { padding: 0 14px 12px; display: grid; gap: 8px; }
+.receipt-rec { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 10px; text-align: left; padding: 12px 14px; margin-bottom: 10px; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); }
+.receipt-rec small { display: block; color: var(--muted); font-size: .78rem; }
+.receipt-rec .tot { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.receipt-rec .tot::after { content: "›"; margin-left: 10px; color: var(--muted); font-weight: 400; }
 .linkbtn { border: 0; background: none; color: var(--accent); text-decoration: underline; padding: 0; font-size: inherit; text-align: left; }
 .linkbtn.danger { color: var(--danger); }
 .thumbs { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -761,51 +759,80 @@ function subscribePurchases() {
   });
 }
 
-let histView = null;   // null = レシートの一覧、文字列 = その品物の値段
+// 履歴の画面は3段階: 一覧（list）→ レシートの項目（receipt）→ 項目の値段の推移（item）。「もどる」で1つ前へ
+let histView = { type: "list" };
+let histListScroll = 0;   // 一覧にもどったとき、元の位置を見せる
+const histSheet = () => $("histBack").querySelector(".sheet");
+const sortedPurchases = () => purchases.slice().sort((a, b) => String(b.date).localeCompare(String(a.date)) || (b.createdMs || 0) - (a.createdMs || 0));
+const receiptTotal = (p) => (p.lines || []).reduce((s, l) => s + (Number(l.price) || 0), 0);
+
 function renderHistory() {
   const box = $("histList");
-  if (purchasesErr && !histView) {
-    $("histTitle").textContent = "買い物の履歴";
+  const back = (label, id) => `<button class="linkbtn" type="button" id="${id}">← ${esc(label)}</button>`;
+
+  if (histView.type === "item") {
+    const from = purchases.find((p) => p.id === histView.from);
+    $("histTitle").textContent = `${histView.name} の値段`;
+    box.innerHTML = (from ? back(`${fmtDate(from.date)} ${from.store || ""} のレシートにもどる`, "histUp") : back("履歴の一覧にもどる", "histUp")) +
+      `<div class="field" id="histPrice" style="margin-top:12px"></div>`;
+    $("histUp").onclick = () => { histView = from ? { type: "receipt", id: from.id } : { type: "list" }; renderHistory(); };
+    renderPriceInto($("histPrice"), histView.name);
+    return;
+  }
+
+  if (histView.type === "receipt") {
+    const p = purchases.find((x) => x.id === histView.id);
+    if (!p) { histView = { type: "list" }; renderHistory(); return; }   // 削除されたときは一覧へ
+    const lines = p.lines || [];
+    $("histTitle").textContent = `${fmtDate(p.date)} のレシート`;
+    box.innerHTML = back("履歴の一覧にもどる", "histUp") +
+      `<p class="hint" style="margin:12px 0 8px">${esc(p.store || "お店不明")}・${lines.length}品・合計 ${yen(receiptTotal(p))}。項目名を押すと、その品物の値段の推移が見られます。</p>
+      <div style="overflow-x:auto"><table class="histtable"><thead><tr><th>項目</th><th class="num">個数</th><th class="num">金額</th></tr></thead><tbody>` +
+      lines.map((l) => `<tr><td><button class="linkbtn" type="button" data-name="${esc(l.name)}">${esc(l.name)}</button>${l.product ? `<span class="sub">${esc(l.product)}</span>` : ""}</td><td class="num">${Number(l.qty) || ""}</td><td class="num">${Number(l.price) ? yen(l.price) : "—"}</td></tr>`).join("") +
+      `</tbody></table></div><button class="linkbtn danger" type="button" data-del="${esc(p.id)}" style="margin-top:12px">このレシートの履歴を削除</button>`;
+    $("histUp").onclick = () => { histView = { type: "list" }; renderHistory(); histSheet().scrollTop = histListScroll; };
+    return;
+  }
+
+  $("histTitle").textContent = "買い物の履歴";
+  if (purchasesErr) {
     box.innerHTML = `<div class="empty"><strong>履歴を読み込めませんでした</strong>${purchasesErr === "permission-denied"
       ? "データベースのルールに「purchases」の行が入っていないようです。Firebase の「ルール」タブを更新して「公開」してから、もう一度開いてください。"
       : "電波を確認して、もう一度開いてください。"}<br><small>（${esc(purchasesErr)}）</small></div>`;
     return;
   }
-  if (histView) {
-    $("histTitle").textContent = `${histView} の値段`;
-    box.innerHTML = `<button class="linkbtn" type="button" id="histBackList">← 履歴の一覧にもどる</button><div class="field" id="histPrice" style="margin-top:12px"></div>`;
-    $("histBackList").onclick = () => { histView = null; renderHistory(); };
-    renderPriceInto($("histPrice"), histView);
-    return;
-  }
-  $("histTitle").textContent = "買い物の履歴";
-  const list = purchases.slice().sort((a, b) => String(b.date).localeCompare(String(a.date)) || (b.createdMs || 0) - (a.createdMs || 0));
+  const list = sortedPurchases();
   if (!list.length) {
     box.innerHTML = `<div class="empty"><strong>まだ履歴がありません</strong>レシートを読み取って「リストに入れる」と、ここに残ります。</div>`;
     return;
   }
-  box.innerHTML = list.map((p) => {
-    const lines = p.lines || [];
-    const total = lines.reduce((s, l) => s + (Number(l.price) || 0), 0);
-    return `<details class="receipt-rec"><summary><span>${esc(fmtDate(p.date))}<small>${esc(p.store || "お店不明")}・${lines.length}品</small></span><span class="tot">${yen(total)}</span></summary>
-      <div class="body"><div style="overflow-x:auto"><table class="histtable"><thead><tr><th>項目</th><th class="num">個数</th><th class="num">金額</th></tr></thead><tbody>` +
-      lines.map((l) => `<tr><td><button class="linkbtn" type="button" data-name="${esc(l.name)}">${esc(l.name)}</button>${l.product ? `<span class="sub">${esc(l.product)}</span>` : ""}</td><td class="num">${Number(l.qty) || ""}</td><td class="num">${Number(l.price) ? yen(l.price) : "—"}</td></tr>`).join("") +
-      `</tbody></table></div><button class="linkbtn danger" type="button" data-del="${esc(p.id)}">この履歴を削除</button></div></details>`;
-  }).join("");
+  box.innerHTML = list.map((p) =>
+    `<button class="receipt-rec" type="button" data-receipt="${esc(p.id)}"><span>${esc(fmtDate(p.date))}<small>${esc(p.store || "お店不明")}・${(p.lines || []).length}品</small></span><span class="tot">${yen(receiptTotal(p))}</span></button>`
+  ).join("");
+}
+function openHistView(view) {
+  if (histView.type === "list") histListScroll = histSheet().scrollTop;
+  histView = view;
+  renderHistory();
+  histSheet().scrollTop = 0;
 }
 $("histBtn").addEventListener("click", () => {
   if (purchasesErr || !purchasesUnsub) subscribePurchases();
-  histView = null; renderHistory(); $("histBack").hidden = false;
+  histView = { type: "list" }; histListScroll = 0;
+  renderHistory(); $("histBack").hidden = false; histSheet().scrollTop = 0;
 });
 $("histClose").addEventListener("click", () => { $("histBack").hidden = true; });
 $("histBack").addEventListener("click", (e) => { if (e.target === $("histBack")) $("histBack").hidden = true; });
 $("histList").addEventListener("click", (e) => {
+  const rec = e.target.closest("[data-receipt]");
+  if (rec) { openHistView({ type: "receipt", id: rec.dataset.receipt }); return; }
   const nameBtn = e.target.closest("[data-name]");
-  if (nameBtn) { histView = nameBtn.dataset.name; renderHistory(); $("histBack").querySelector(".sheet").scrollTop = 0; return; }
+  if (nameBtn) { openHistView({ type: "item", name: nameBtn.dataset.name, from: histView.type === "receipt" ? histView.id : null }); return; }
   const del = e.target.closest("[data-del]");
   if (!del) return;
   if (del.dataset.armed !== "1") { del.dataset.armed = "1"; del.textContent = "もう一度押すと削除します"; return; }
   deleteDoc(doc(fs, "households", household.id, "purchases", del.dataset.del)).catch(() => toast("削除できませんでした"));
+  histView = { type: "list" }; renderHistory(); histSheet().scrollTop = histListScroll;
 });
 
 /* ---------- レシート読み取り ---------- */
