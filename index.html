@@ -156,6 +156,37 @@ mark { background: var(--accent-soft); color: inherit; border-radius: 3px; }
 .rline.off { opacity: .45; }
 .badge { padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; font-size: .72rem; white-space: nowrap; }
 .badge.merge { color: var(--accent); }
+/* receipt header + per-line price */
+.rchead { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 8px; }
+.rchead input { height: 42px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); padding: 0 10px; width: 100%; min-width: 0; }
+.rprice { display: inline-flex; align-items: center; gap: 2px; font-family: var(--f-body); font-size: .85rem; }
+.rprice input { width: 5.5em; height: 32px; border: 1px solid var(--line); border-radius: 8px; background: transparent; padding: 0 6px; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* price history */
+.chartbox { border: 1px solid var(--line); border-radius: var(--r); padding: 10px 8px 4px; background: var(--surface); }
+.chartbox svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chartbox .tip { min-height: 1.4em; font-size: .85rem; padding: 0 4px 6px; font-variant-numeric: tabular-nums; }
+.chartbox .tip strong { font-size: 1rem; }
+.chartbox .axis { fill: var(--muted); font-size: 10px; font-family: var(--f-body); }
+.chartbox .grid { stroke: var(--line); stroke-width: 1; }
+.chartbox .line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chartbox .pt { fill: var(--accent); stroke: var(--surface); stroke-width: 2; }
+.chartbox .pt.on { r: 6; }
+.chartbox .hit { fill: transparent; cursor: pointer; }
+.chartbox .lbl { fill: var(--ink); font-size: 11px; font-weight: 700; font-family: var(--f-body); }
+.histtable { width: 100%; border-collapse: collapse; font-size: .85rem; font-variant-numeric: tabular-nums; }
+.histtable th { text-align: left; font-weight: 500; color: var(--muted); font-size: .75rem; padding: 4px; border-bottom: 1px solid var(--line); }
+.histtable td { padding: 6px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.histtable td.num, .histtable th.num { text-align: right; white-space: nowrap; }
+.histtable .sub { display: block; color: var(--muted); font-size: .72rem; }
+.receipt-rec { border: 1px solid var(--line); border-radius: var(--r); margin-bottom: 10px; overflow: hidden; }
+.receipt-rec summary { list-style: none; display: flex; justify-content: space-between; gap: 10px; padding: 12px 14px; cursor: pointer; }
+.receipt-rec summary::-webkit-details-marker { display: none; }
+.receipt-rec summary small { display: block; color: var(--muted); font-size: .78rem; }
+.receipt-rec summary .tot { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.receipt-rec .body { padding: 0 14px 12px; display: grid; gap: 8px; }
+.linkbtn { border: 0; background: none; color: var(--accent); text-decoration: underline; padding: 0; font-size: inherit; text-align: left; }
+.linkbtn.danger { color: var(--danger); }
 .thumbs { display: flex; gap: 8px; flex-wrap: wrap; }
 .rraw { grid-column: 2 / 4; font-size: .74rem; color: var(--muted); overflow-wrap: anywhere; }
 .countinfo { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--bg); font-size: .88rem; font-variant-numeric: tabular-nums; }
@@ -181,6 +212,9 @@ mark { background: var(--accent-soft); color: inherit; border-radius: 3px; }
       <h1>わが家の買い物メモ</h1>
       <div class="side">
         <span class="sum" id="sum"></span>
+        <button class="iconbtn" id="histBtn" type="button" aria-label="買い物の履歴" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg>
+        </button>
         <button class="iconbtn" id="setBtn" type="button" aria-label="設定と家族の招待" hidden>
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
         </button>
@@ -257,6 +291,7 @@ mark { background: var(--accent-soft); color: inherit; border-radius: 3px; }
       <input id="fNewTag" type="text" placeholder="新しいタグを作る（例: ペット用品）" autocomplete="off">
     </div>
     <p class="hint" id="fHint" hidden></p>
+    <div class="field" id="fHistory" hidden></div>
     <div class="actions">
       <button class="btn" type="button" id="fCancel">やめる</button>
       <button class="btn primary" type="submit" id="fSave">保存</button>
@@ -308,6 +343,15 @@ mark { background: var(--accent-soft); color: inherit; border-radius: 3px; }
     </div>
 
     <button class="btn" type="button" id="setClose">閉じる</button>
+  </div>
+</div>
+
+<div class="backdrop" id="histBack" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="histTitle">
+    <h3 id="histTitle">買い物の履歴</h3>
+    <p class="hint">レシートを読み取って「リストに入れる」と、お店・日付・金額がここに残ります。項目名を押すと、その品物の値段の推移が見られます。</p>
+    <div id="histList"></div>
+    <button class="btn" type="button" id="histClose">閉じる</button>
   </div>
 </div>
 
@@ -504,6 +548,8 @@ function openEdit(it) {
   $("fQty").textContent = fQty;
   $("fNewTag").value = "";
   $("fDelete").hidden = !it;
+  $("fHistory").hidden = !it;
+  if (it) renderPriceInto($("fHistory"), it.name);
   delArmed = false; $("fDelete").classList.remove("armed"); $("fDelete").textContent = "この項目を削除";
   updateHint();
   paintTagPick();
@@ -620,11 +666,127 @@ $("keySave").addEventListener("click", async () => {
   }
 });
 
+/* ---------- 買い物の履歴・値段の推移 ---------- */
+// purchases/{id} = レシート1枚分 { store, date: "YYYY-MM-DD", lines: [{ name, product, qty, price }], createdMs }
+let purchases = [];
+const yen = (n) => "¥" + Math.round(n).toLocaleString("ja-JP");
+const fmtDate = (s) => { const m = String(s || "").match(/^(\d{4})-(\d{2})-(\d{2})$/); return m ? `${+m[1]}/${+m[2]}/${+m[3]}` : (s || "日付不明"); };
+const todayStr = () => { const d = new Date(), p = (x) => String(x).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; };
+
+// ある品物の、1個あたりの値段の記録（古い順）
+function historyFor(name) {
+  const key = norm(name), out = [];
+  for (const p of purchases) for (const l of p.lines || []) {
+    const qty = Number(l.qty), price = Number(l.price);
+    if (norm(l.name) === key && qty > 0 && price > 0) out.push({ date: p.date, store: p.store || "", qty, price, unit: price / qty, product: l.product || "", ms: p.createdMs || 0 });
+  }
+  return out.sort((a, b) => String(a.date).localeCompare(String(b.date)) || a.ms - b.ms);
+}
+
+function niceStep(raw) {
+  const p = Math.pow(10, Math.floor(Math.log10(raw || 1))), m = raw / p;
+  return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * p;
+}
+// 1個あたりの値段の折れ線（横軸は日付、縦軸は円）
+function priceChartSvg(h) {
+  const W = 320, H = 150, L = 44, R = 16, T = 18, B = 24;
+  const t = h.map((p) => Date.parse(p.date));
+  const byDate = t.every((v) => !isNaN(v)) && new Set(t).size > 1;
+  const xv = byDate ? t : h.map((_, i) => i);
+  const x0 = Math.min(...xv), x1 = Math.max(...xv);
+  const X = (v) => x1 === x0 ? L + (W - L - R) / 2 : L + (v - x0) / (x1 - x0) * (W - L - R);
+  const vals = h.map((p) => p.unit);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  const pad = Math.max(10, (hi - lo) * 0.2);
+  lo = Math.max(0, lo - pad); hi += pad;
+  const step = niceStep((hi - lo) / 3);
+  lo = Math.floor(lo / step) * step; hi = Math.ceil(hi / step) * step;
+  const Y = (v) => T + (hi - v) / (hi - lo) * (H - T - B);
+  let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="1個あたりの値段の推移">`;
+  for (let v = lo; v <= hi + 0.001; v += step) {
+    s += `<line class="grid" x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}"/><text class="axis" x="${L - 6}" y="${Y(v) + 3}" text-anchor="end">${yen(v)}</text>`;
+  }
+  const first = h[0], last = h[h.length - 1];
+  s += `<text class="axis" x="${X(xv[0])}" y="${H - 6}" text-anchor="${h.length > 1 ? "start" : "middle"}">${esc(fmtDate(first.date).replace(/^\d+\//, ""))}</text>`;
+  if (h.length > 1) s += `<text class="axis" x="${X(xv[xv.length - 1])}" y="${H - 6}" text-anchor="end">${esc(fmtDate(last.date).replace(/^\d+\//, ""))}</text>`;
+  if (h.length > 1) s += `<path class="line" d="${h.map((p, i) => `${i ? "L" : "M"}${X(xv[i]).toFixed(1)} ${Y(p.unit).toFixed(1)}`).join(" ")}"/>`;
+  h.forEach((p, i) => { s += `<circle class="pt" data-i="${i}" cx="${X(xv[i])}" cy="${Y(p.unit)}" r="4"/>`; });
+  s += `<text class="lbl" x="${X(xv[xv.length - 1])}" y="${Y(last.unit) - 9}" text-anchor="${h.length > 1 ? "end" : "middle"}">${yen(last.unit)}</text>`;
+  h.forEach((p, i) => { s += `<circle class="hit" data-i="${i}" cx="${X(xv[i])}" cy="${Y(p.unit)}" r="16"><title>${esc(fmtDate(p.date))} ${yen(p.unit)}</title></circle>`; });
+  return s + `</svg>`;
+}
+
+// box の中に、その品物の値段のグラフと記録の表を描く
+function renderPriceInto(box, name) {
+  const h = historyFor(name);
+  if (!h.length) {
+    box.innerHTML = `<span>値段の推移</span><p class="hint">まだ記録がありません。レシートを読み取ってリストに入れると、ここに値段が残ります。</p>`;
+    return;
+  }
+  const last = h[h.length - 1], prev = h[h.length - 2];
+  const diff = prev ? Math.round(last.unit - prev.unit) : 0;
+  const compare = !prev ? "まだ1回分の記録です。"
+    : diff === 0 ? `前回（${fmtDate(prev.date)}）と同じ値段です。`
+    : `前回（${fmtDate(prev.date)}・${yen(prev.unit)}）より ${yen(Math.abs(diff))} ${diff > 0 ? "高く" : "安く"}なっています。`;
+  const tipFor = (p) => `${esc(fmtDate(p.date))}　${esc(p.store || "お店不明")}　<strong>${yen(p.unit)}</strong>／個${p.qty > 1 ? `（${p.qty}個で${yen(p.price)}）` : ""}`;
+  box.innerHTML = `<span>値段の推移（1個あたり）</span>
+    <div class="chartbox"><div class="tip">${tipFor(last)}</div>${priceChartSvg(h)}</div>
+    <p class="hint">${compare}点を押すと、その日の値段が見られます。</p>
+    <div style="overflow-x:auto"><table class="histtable"><thead><tr><th>日付・お店</th><th class="num">個数</th><th class="num">金額</th></tr></thead><tbody>` +
+    h.slice().reverse().map((p) => `<tr><td>${esc(fmtDate(p.date))}<span class="sub">${esc(p.store || "お店不明")}${p.product ? "・" + esc(p.product) : ""}</span></td><td class="num">${p.qty}</td><td class="num">${yen(p.price)}${p.qty > 1 ? `<span class="sub">1個 ${yen(p.unit)}</span>` : ""}</td></tr>`).join("") +
+    `</tbody></table></div>`;
+  const tip = box.querySelector(".tip");
+  const pts = box.querySelectorAll(".pt");
+  const pick = (i) => { tip.innerHTML = tipFor(h[i]); pts.forEach((c) => c.classList.toggle("on", +c.dataset.i === i)); };
+  box.querySelectorAll(".hit").forEach((c) => {
+    c.addEventListener("pointerenter", () => pick(+c.dataset.i));
+    c.addEventListener("click", () => pick(+c.dataset.i));
+  });
+  pick(h.length - 1);
+}
+
+let histView = null;   // null = レシートの一覧、文字列 = その品物の値段
+function renderHistory() {
+  const box = $("histList");
+  if (histView) {
+    $("histTitle").textContent = `${histView} の値段`;
+    box.innerHTML = `<button class="linkbtn" type="button" id="histBackList">← 履歴の一覧にもどる</button><div class="field" id="histPrice" style="margin-top:12px"></div>`;
+    $("histBackList").onclick = () => { histView = null; renderHistory(); };
+    renderPriceInto($("histPrice"), histView);
+    return;
+  }
+  $("histTitle").textContent = "買い物の履歴";
+  const list = purchases.slice().sort((a, b) => String(b.date).localeCompare(String(a.date)) || (b.createdMs || 0) - (a.createdMs || 0));
+  if (!list.length) {
+    box.innerHTML = `<div class="empty"><strong>まだ履歴がありません</strong>レシートを読み取って「リストに入れる」と、ここに残ります。</div>`;
+    return;
+  }
+  box.innerHTML = list.map((p) => {
+    const lines = p.lines || [];
+    const total = lines.reduce((s, l) => s + (Number(l.price) || 0), 0);
+    return `<details class="receipt-rec"><summary><span>${esc(fmtDate(p.date))}<small>${esc(p.store || "お店不明")}・${lines.length}品</small></span><span class="tot">${yen(total)}</span></summary>
+      <div class="body"><div style="overflow-x:auto"><table class="histtable"><thead><tr><th>項目</th><th class="num">個数</th><th class="num">金額</th></tr></thead><tbody>` +
+      lines.map((l) => `<tr><td><button class="linkbtn" type="button" data-name="${esc(l.name)}">${esc(l.name)}</button>${l.product ? `<span class="sub">${esc(l.product)}</span>` : ""}</td><td class="num">${Number(l.qty) || ""}</td><td class="num">${Number(l.price) ? yen(l.price) : "—"}</td></tr>`).join("") +
+      `</tbody></table></div><button class="linkbtn danger" type="button" data-del="${esc(p.id)}">この履歴を削除</button></div></details>`;
+  }).join("");
+}
+$("histBtn").addEventListener("click", () => { histView = null; renderHistory(); $("histBack").hidden = false; });
+$("histClose").addEventListener("click", () => { $("histBack").hidden = true; });
+$("histBack").addEventListener("click", (e) => { if (e.target === $("histBack")) $("histBack").hidden = true; });
+$("histList").addEventListener("click", (e) => {
+  const nameBtn = e.target.closest("[data-name]");
+  if (nameBtn) { histView = nameBtn.dataset.name; renderHistory(); $("histBack").querySelector(".sheet").scrollTop = 0; return; }
+  const del = e.target.closest("[data-del]");
+  if (!del) return;
+  if (del.dataset.armed !== "1") { del.dataset.armed = "1"; del.textContent = "もう一度押すと削除します"; return; }
+  deleteDoc(doc(fs, "households", household.id, "purchases", del.dataset.del)).catch(() => toast("削除できませんでした"));
+});
+
 /* ---------- レシート読み取り ---------- */
 const MAX_PHOTOS = 3;
 let staged = [];          // 読み取る前に選んだ写真（長いレシートは分けて撮れる）
 let rcFiles = [];         // 最後に読み取った写真（ていねいに読み直す用）
-let rcRows = [], rcCount = null, rcCtl = null, rcUrls = [];
+let rcRows = [], rcCount = null, rcCtl = null, rcUrls = [], rcStore = "", rcDate = "";
 let stagedFromCamera = false, rcFromCamera = false;
 
 $("receiptBtn").addEventListener("click", () => { staged = []; stagedFromCamera = false; $("pickBack").hidden = false; });
@@ -802,22 +964,25 @@ function buildPrompt(careful, photoCount) {
     "【整理のしかた】",
     "- 「2コX単158」「2コ×158」「×3」「3点」のような行は、すぐ上の商品の個数を表す。それ自体は商品ではない",
     "- 「1/4」「1/2カット」「6枚」「ミニ3」「3P」「7分」「1000ml」「12R」などの大きさ・枚数・入り数・ゆで時間は個数ではない",
-    "- 値引き・割引の行（マイナスの金額、「割引」「値引」「引」「限」「◯円から◯円に致します」など）は入れない",
-    "- 小計・合計・税・ポイント・お預かり・お釣り・支払い方法・レジ袋・店名・住所・日付・レジ番号の行は入れない",
+    "- 値引き・割引の行（マイナスの金額、「割引」「値引」「引」「限」「◯円から◯円に致します」など）は商品として入れない（金額はすぐ上の商品の price から差し引く）",
+    "- 小計・合計・税・ポイント・お預かり・お釣り・支払い方法・レジ袋・店名・住所・日付・レジ番号の行は商品として入れない",
     "- name: 何の食べ物・品物かがわかる、家庭のメモで使う短く一般的な日本語の名前。商品名・ブランド名は使わない（例: 「ナチュレ 恵」→「ヨーグルト」、「ポポロスパ7分」→「パスタ」、「旨味ひきわり ミニ3」→「納豆」、「エブリィブレッド6枚」→「食パン」、「塩銀さけ切身」→「塩鮭」、「国産若鶏モモ」→「鶏もも肉」、「エリエール トイレット12R」→「トイレットペーパー」）",
     "- 今のリストに同じ品物があれば、name はその名前を一字一句そのまま使う。今のリスト: " + (names.length ? names.join("、") : "（まだ空）"),
     "- product: 商品名・ブランド名（記号・大きさ・数量・値段は除く）。name と同じ・ただの品名なら空文字（例: 「ナチュレ恵」「ポポロスパ」。「白菜1/4」なら空文字）",
     "- raw: レシートに書かれていたその商品の行の文字をそのまま（個数の行があれば続けて書く）",
     "- qty: 買った個数（同じ商品が何行もあれば合計）",
     "- tag: 次の中から最も合うものを1つ: " + tags.join("、"),
+    "- price: その商品に払った金額（円の数字だけ）。「2コX単158 ¥316」なら 316。すぐ下に値引きの行（「割引 -149」「-60」など）があれば差し引いた金額にする（例: ¥745 のすぐ下に -149 なら 596）。同じ商品が何行もあれば合計。読めなければ 0",
     "- count: レシートの「お買上点数」「点数」「◯点」の数。書かれていなければ null",
+    "- store: お店の名前（レシートの上のほうの店名。支店名も含める。例: 「エブリィビッグデー掛川店」）。わからなければ空文字",
+    "- date: 買った日（レシートの日付）を YYYY-MM-DD の形で。わからなければ空文字",
     "- 最後に qty の合計が count と合うか確かめ、合わなければ読み落としや数え間違いを直す",
     "",
     "【答え方】JSON だけで答える。例:",
     careful
-      ? '{"lines":["※ナチュレ　恵","2コX単158 ¥316","※白菜１／４ ¥168"],"count":3,"items":[{"name":"ヨーグルト","product":"ナチュレ恵","raw":"ナチュレ 恵 2コX単158","qty":2,"tag":"乳製品・卵"},{"name":"白菜","product":"","raw":"白菜1/4","qty":1,"tag":"野菜"}]}'
-      : '{"count":3,"items":[{"name":"ヨーグルト","product":"ナチュレ恵","raw":"ナチュレ 恵 2コX単158","qty":2,"tag":"乳製品・卵"},{"name":"白菜","product":"","raw":"白菜1/4","qty":1,"tag":"野菜"}]}',
-    'レシートが写っていない、または読めないときは {"count":null,"items":[]} と答える。',
+      ? '{"lines":["※ナチュレ　恵","2コX単158 ¥316","※白菜１／４ ¥168"],"store":"◯◯スーパー△△店","date":"2026-11-22","count":3,"items":[{"name":"ヨーグルト","product":"ナチュレ恵","raw":"ナチュレ 恵 2コX単158","qty":2,"price":316,"tag":"乳製品・卵"},{"name":"白菜","product":"","raw":"白菜1/4","qty":1,"price":168,"tag":"野菜"}]}'
+      : '{"store":"◯◯スーパー△△店","date":"2026-11-22","count":3,"items":[{"name":"ヨーグルト","product":"ナチュレ恵","raw":"ナチュレ 恵 2コX単158","qty":2,"price":316,"tag":"乳製品・卵"},{"name":"白菜","product":"","raw":"白菜1/4","qty":1,"price":168,"tag":"野菜"}]}',
+    'レシートが写っていない、または読めないときは {"store":"","date":"","count":null,"items":[]} と答える。',
   ].filter((l) => l !== "").join("\n");
 }
 
@@ -887,17 +1052,21 @@ async function readReceipt(files, careful) {
       const tag = tags.includes(r.tag) ? r.tag : "その他";
       const product = String(r.product || "").trim();
       const raw = String(r.raw || "").trim();
+      const price = Math.max(0, Math.round(Number(String(r.price ?? "").replace(/[^\d.]/g, "")) || 0));
       const key = norm(name);
       if (merged.has(key)) {
         const m = merged.get(key);
         m.qty += qty;
+        m.price += price;
         if (raw) m.raw = m.raw ? m.raw + " ／ " + raw : raw;
         if (product && !m.products.includes(product)) m.products.push(product);
       } else {
-        merged.set(key, { name, qty, tag, raw, products: product && norm(product) !== key ? [product] : [], on: true });
+        merged.set(key, { name, qty, price, tag, raw, products: product && norm(product) !== key ? [product] : [], on: true });
       }
     }
     rcRows = [...merged.values()];
+    rcStore = String(out.store || "").trim();
+    rcDate = /^\d{4}-\d{2}-\d{2}$/.test(String(out.date || "")) ? out.date : todayStr();
     const c = Math.round(Number(out.count));
     rcCount = Number.isFinite(c) && c > 0 ? c : null;
     showReceiptResult(careful);
@@ -940,7 +1109,11 @@ function showReceiptResult(careful) {
   if (!rcRows.length) { showRetry("商品が見つかりませんでした", "レシート全体がまっすぐ写るように撮り直してください。"); return; }
   const tags = allTags();
   $("rcTitle").textContent = "読み取った商品";
-  $("rcBody").innerHTML = `<p class="countinfo" id="rcCountInfo"></p>
+  $("rcBody").innerHTML = `<div class="rchead">
+      <label class="field"><span>お店</span><input id="rcStore" type="text" value="${esc(rcStore)}" placeholder="お店の名前" autocomplete="off"></label>
+      <label class="field"><span>買った日</span><input id="rcDate" type="date" value="${esc(rcDate)}"></label>
+    </div>
+    <p class="countinfo" id="rcCountInfo" style="margin-top:10px"></p>
     <p class="hint" style="margin:8px 0 10px">名前・個数・タグを直せます。入れないものはチェックを外してください。</p>
     <div class="slip"><div class="head">RECEIPT ・ ${rcRows.length}品</div>` +
     rcRows.map((r, i) => `<div class="rline${r.on ? "" : " off"}" data-i="${i}">
@@ -948,7 +1121,7 @@ function showReceiptResult(careful) {
       <input class="rname" type="text" value="${esc(r.name)}" aria-label="商品名" data-k="name">
       <div class="stepper"><button type="button" data-k="dec" aria-label="1つ減らす">−</button><span class="qty">${r.qty}</span><button type="button" data-k="inc" aria-label="1つ増やす">＋</button></div>
       ${r.raw ? `<div class="rraw">レシート: ${esc(r.raw)}</div>` : ""}
-      <div class="rmeta"><select data-k="tag" aria-label="タグ">${tags.map((t) => `<option${t === r.tag ? " selected" : ""}>${esc(t)}</option>`).join("")}</select><span class="rb">${rcBadge(r)}</span></div>
+      <div class="rmeta"><select data-k="tag" aria-label="タグ">${tags.map((t) => `<option${t === r.tag ? " selected" : ""}>${esc(t)}</option>`).join("")}</select><label class="rprice">¥<input type="number" inputmode="numeric" min="0" data-k="price" value="${r.price || ""}" placeholder="金額" aria-label="${esc(r.name)}の金額"></label><span class="rb">${rcBadge(r)}</span></div>
     </div>`).join("") + `</div>` +
     (careful ? "" : `<button class="btn" type="button" id="rcAgain" style="width:100%;margin-top:12px">ていねいに読み直す（30秒ほど）</button>`) +
     `<button class="btn" type="button" id="rcFolder2" style="width:100%;margin-top:8px">写真フォルダから選び直す</button>` + savedHint();
@@ -965,9 +1138,12 @@ function paintRcActions() {
   $("rcApply").onclick = applyReceipt;
 }
 $("rcBody").addEventListener("input", (e) => {
+  if (e.target.id === "rcStore") { rcStore = e.target.value; return; }
+  if (e.target.id === "rcDate") { rcDate = e.target.value; return; }
   const line = e.target.closest(".rline"); if (!line) return;
   const r = rcRows[+line.dataset.i];
   const k = e.target.dataset.k;
+  if (k === "price") { r.price = Math.max(0, Math.round(Number(e.target.value) || 0)); return; }
   if (k === "name") { r.name = e.target.value; line.querySelector(".rb").innerHTML = rcBadge(r); paintRcActions(); }
   if (k === "tag") r.tag = e.target.value;
   if (k === "on") { r.on = e.target.checked; line.classList.toggle("off", !r.on); paintRcActions(); }
@@ -983,6 +1159,14 @@ $("rcBody").addEventListener("click", (e) => {
 async function applyReceipt() {
   const rows = rcRows.filter((r) => r.on && r.name.trim());
   $("rcApply").disabled = true; $("rcApply").textContent = "入れています…";
+  // 買い物の履歴（お店・日付・項目名・金額）を残す
+  addDoc(collection(hhDoc, "purchases"), {
+    store: rcStore.trim(),
+    date: /^\d{4}-\d{2}-\d{2}$/.test(rcDate) ? rcDate : todayStr(),
+    lines: rows.map((r) => ({ name: r.name.trim(), product: (r.products || []).join("・"), qty: r.qty, price: r.price || 0 })),
+    createdAt: serverTimestamp(),
+    createdMs: Date.now(),
+  }).catch(() => toast("履歴を保存できませんでした（データベースのルールを確認してください）"));
   let added = 0, merged = 0, failed = 0;
   for (const r of rows) {
     try { (await addOrMerge(r.name.trim(), r.qty, r.tag, r.products)) === "merged" ? merged++ : added++; }
@@ -1018,7 +1202,7 @@ function openHousehold(id, isNew) {
   if (location.hash !== "#h=" + id) history.replaceState(null, "", "#h=" + id);
   hhDoc = doc(fs, "households", id);
   itemsCol = collection(hhDoc, "items");
-  $("toolbar").hidden = false; $("dock").hidden = false; $("setBtn").hidden = false;
+  $("toolbar").hidden = false; $("dock").hidden = false; $("setBtn").hidden = false; $("histBtn").hidden = false;
   $("list").innerHTML = `<div class="empty"><strong>リストを読み込んでいます</strong>家族で共有しているリストに接続しています。</div>`;
   if (isNew) setDoc(hhDoc, { createdAt: serverTimestamp() }, { merge: true }).catch(() => {});
 
@@ -1027,6 +1211,10 @@ function openHousehold(id, isNew) {
     const d = snap.data() || {};
     household.geminiKey = d.geminiKey || "";
     household.geminiModel = d.geminiModel || "";
+  }, () => {});
+  onSnapshot(collection(hhDoc, "purchases"), (snap) => {
+    purchases = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    if (!$("histBack").hidden) renderHistory();
   }, () => {});
   onSnapshot(itemsCol, (snap) => {
     items = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((r) => r.name);
