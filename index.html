@@ -152,6 +152,13 @@ mark { background: var(--accent-soft); color: inherit; border-radius: 3px; }
 .rline.off { opacity: .45; }
 .badge { padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; font-size: .72rem; white-space: nowrap; }
 .badge.merge { color: var(--accent); }
+.thumbs { display: flex; gap: 8px; flex-wrap: wrap; }
+.rraw { grid-column: 2 / 4; font-size: .74rem; color: var(--muted); overflow-wrap: anywhere; }
+.countinfo { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--bg); font-size: .88rem; font-variant-numeric: tabular-nums; }
+.countinfo.ok { background: var(--accent-soft); }
+.countinfo.ng { color: var(--danger); border: 1px solid var(--danger); }
+.row .name .brand { display: block; font-size: .74rem; font-style: normal; color: var(--muted); }
+.reading { flex-wrap: wrap; }
 .preview { width: 72px; height: 96px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); flex: none; }
 .reading { display: flex; gap: 14px; align-items: center; }
 .spinner { width: 22px; height: 22px; border-radius: 50%; border: 3px solid var(--accent-soft); border-top-color: var(--accent); animation: spin .9s linear infinite; flex: none; }
@@ -201,7 +208,7 @@ mark { background: var(--accent-soft); color: inherit; border-radius: 3px; }
 </div>
 <!-- capture 付きはカメラをその場で起動、なしは写真フォルダから選ぶ -->
 <input id="cameraInput" type="file" accept="image/*" capture="environment" hidden>
-<input id="galleryInput" type="file" accept="image/*" hidden>
+<input id="galleryInput" type="file" accept="image/*" multiple hidden>
 
 <div class="backdrop" id="pickBack" hidden>
   <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="pickTitle">
@@ -215,7 +222,21 @@ mark { background: var(--accent-soft); color: inherit; border-radius: 3px; }
       </button>
       <button class="btn" type="button" id="pickCancel">やめる</button>
     </div>
-    <p class="hint">レシート全体がまっすぐ写るように、明るい場所で撮ってください。</p>
+    <p class="hint">レシートを平らに置き、全体が画面いっぱいに写るように、明るい場所で撮ってください。長いレシートは上と下に分けて撮れます（3枚まで）。</p>
+  </div>
+</div>
+
+<div class="backdrop" id="stageBack" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="stageTitle">
+    <h3 id="stageTitle">この写真で読み取りますか？</h3>
+    <div id="stageThumbs"></div>
+    <p class="hint"><span id="stageCount"></span>。長いレシートは、上と下に分けて撮ると文字が大きく写り、正確に読み取れます。</p>
+    <button class="btn primary big" type="button" id="stageRead">読み取る</button>
+    <div class="actions" id="stageMore">
+      <button class="btn" type="button" id="stageCamera">もう1枚撮る</button>
+      <button class="btn" type="button" id="stageGallery">写真を追加</button>
+    </div>
+    <button class="btn" type="button" id="stageCancel">やめる</button>
   </div>
 </div>
 
@@ -296,7 +317,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/fireba
 import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
-  collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, setDoc, increment, serverTimestamp,
+  collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, setDoc, increment, arrayUnion, serverTimestamp,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { FIREBASE_CONFIG, GEMINI_MODEL } from "./config.js";
 
@@ -341,7 +362,7 @@ function highlight(name) {
 function matches(it) {
   if (!query) return true;
   const q = norm(query);
-  return norm(it.name).includes(q) || norm(it.tag || "").includes(q);
+  return norm(it.name).includes(q) || norm(it.tag || "").includes(q) || (it.brands || []).some((b) => norm(b).includes(q));
 }
 
 function render() {
@@ -376,7 +397,7 @@ function render() {
       rows.map((it) => {
         const q = qtyOf(it);
         return `<div class="row${q === 0 ? " zero" : ""}" data-id="${esc(it.id)}">
-          <button class="name" type="button" data-act="edit"><span>${highlight(it.name)}</span>${q === 0 ? "<small>なくなりました</small>" : ""}</button>
+          <button class="name" type="button" data-act="edit"><span>${highlight(it.name)}</span>${(it.brands || []).length ? `<em class="brand">${esc(it.brands.slice(-2).join("・"))}</em>` : ""}${q === 0 ? "<small>なくなりました</small>" : ""}</button>
           <div class="stepper">
             <button type="button" data-act="dec" aria-label="${esc(it.name)}を1つ減らす" ${q === 0 ? "disabled" : ""}>−</button>
             <span class="qty" aria-live="polite">${q}</span>
@@ -403,15 +424,19 @@ function bump(id, d) {
     .catch(() => toast("保存できませんでした。電波を確認してください"));
 }
 
-// 同じ名前があれば個数を足し、なければ新しく作る
-async function addOrMerge(name, qty, tag) {
+// 同じ名前があれば個数を足し、なければ新しく作る。brands はレシートの商品名（ナチュレ恵など）
+async function addOrMerge(name, qty, tag, brands = []) {
   const key = norm(name);
   const hit = items.find((i) => norm(i.name) === key);
   if (hit) {
-    await updateDoc(doc(itemsCol, hit.id), { qty: qtyOf(hit) === 0 ? qty : increment(qty), updatedAt: serverTimestamp() });
+    const patch = { qty: qtyOf(hit) === 0 ? qty : increment(qty), updatedAt: serverTimestamp() };
+    if (brands.length) patch.brands = arrayUnion(...brands);
+    await updateDoc(doc(itemsCol, hit.id), patch);
     return "merged";
   }
-  const ref = await addDoc(itemsCol, { name: name.trim(), qty, tag: tag || "その他", createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+  const data = { name: name.trim(), qty, tag: tag || "その他", createdAt: serverTimestamp(), updatedAt: serverTimestamp() };
+  if (brands.length) data.brands = brands;
+  const ref = await addDoc(itemsCol, data);
   if (!items.some((i) => i.id === ref.id)) items.push({ id: ref.id, name: name.trim(), qty, tag });   // 次の行の重複判定にすぐ使う
   return "added";
 }
@@ -549,20 +574,43 @@ $("keySave").addEventListener("click", async () => {
 });
 
 /* ---------- レシート読み取り ---------- */
-let rcRows = [], rcCtl = null, rcPreviewUrl = null;
+const MAX_PHOTOS = 3;
+let staged = [];          // 読み取る前に選んだ写真（長いレシートは分けて撮れる）
+let rcFiles = [];         // 最後に読み取った写真（ていねいに読み直す用）
+let rcRows = [], rcCount = null, rcCtl = null, rcUrls = [];
 
-$("receiptBtn").addEventListener("click", () => { $("pickBack").hidden = false; });
+$("receiptBtn").addEventListener("click", () => { staged = []; $("pickBack").hidden = false; });
 $("pickCancel").addEventListener("click", () => { $("pickBack").hidden = true; });
 $("pickBack").addEventListener("click", (e) => { if (e.target === $("pickBack")) $("pickBack").hidden = true; });
 $("pickCamera").addEventListener("click", () => { $("pickBack").hidden = true; $("cameraInput").click(); });
 $("pickGallery").addEventListener("click", () => { $("pickBack").hidden = true; $("galleryInput").click(); });
 for (const id of ["cameraInput", "galleryInput"]) {
   $(id).addEventListener("change", (e) => {
-    const file = e.target.files && e.target.files[0];
+    const files = [...(e.target.files || [])];
     e.target.value = "";
-    if (file) readReceipt(file);
+    if (!files.length) { if (staged.length) showStaged(); return; }
+    staged = [...staged, ...files].slice(0, MAX_PHOTOS);
+    showStaged();
   });
 }
+
+function revokeUrls() { for (const u of rcUrls) URL.revokeObjectURL(u); rcUrls = []; }
+function thumbs(files) {
+  revokeUrls();
+  rcUrls = files.map((f) => URL.createObjectURL(f));
+  return `<div class="thumbs">${rcUrls.map((u, i) => `<img class="preview" src="${u}" alt="レシートの写真${i + 1}">`).join("")}</div>`;
+}
+function showStaged() {
+  $("stageThumbs").innerHTML = thumbs(staged);
+  $("stageCount").textContent = `${staged.length}枚 ／ ${MAX_PHOTOS}枚まで`;
+  $("stageMore").hidden = staged.length >= MAX_PHOTOS;
+  $("stageBack").hidden = false;
+}
+function closeStaged() { $("stageBack").hidden = true; revokeUrls(); }
+$("stageCamera").addEventListener("click", () => { $("stageBack").hidden = true; $("cameraInput").click(); });
+$("stageGallery").addEventListener("click", () => { $("stageBack").hidden = true; $("galleryInput").click(); });
+$("stageCancel").addEventListener("click", () => { staged = []; closeStaged(); });
+$("stageRead").addEventListener("click", () => { const f = staged; staged = []; closeStaged(); readReceipt(f, false); });
 
 // 送る前に約150万画素の JPEG に縮める（細長いレシートでも文字が読める大きさを保ちつつ、通信量と待ち時間を減らす）
 async function shrink(file) {
@@ -581,9 +629,11 @@ async function shrink(file) {
 class ReadError extends Error { constructor(code, detail) { super(code); this.code = code; this.detail = detail || ""; } }
 
 const GEMINI_API = "https://generativelanguage.googleapis.com/v1beta";
-// 速い順。混み合って断られたら次のモデルで読み直す
+// ふだんは速い順。混み合って断られたら次のモデルで読み直す
 const MODEL_PREFS = [...new Set([GEMINI_MODEL, "gemini-flash-lite-latest", "gemini-2.5-flash-lite", "gemini-flash-latest", "gemini-2.5-flash", "gemini-2.0-flash"])];
-const ATTEMPT_TIMEOUT_MS = 25000;
+// ていねいに読み直すときは、考える力のある Flash を先に使う
+const CAREFUL_PREFS = ["gemini-flash-latest", "gemini-2.5-flash"];
+const TIMEOUT_MS = { fast: 25000, careful: 60000 };
 
 async function googleError(res) {
   try { const j = await res.json(); return `${res.status} ${j.error?.status || ""} ${j.error?.message || ""}`.trim(); }
@@ -621,15 +671,25 @@ async function rankedModels(key) {
 }
 async function findModel(key) { return (await rankedModels(key))[0]; }
 
-async function askGemini(b64, prompt, signal, model) {
+function parseAnswer(text) {
+  const tryParse = (s) => { try { return JSON.parse(s); } catch (e) { return undefined; } };
+  let v = tryParse(text);
+  if (v === undefined) { const m = text.match(/\{[\s\S]*\}/); if (m) v = tryParse(m[0]); }
+  if (v === undefined) { const m = text.match(/\[[\s\S]*\]/); if (m) v = tryParse(m[0]); }
+  if (v === undefined) throw new ReadError("parse", text.slice(0, 120));
+  return Array.isArray(v) ? { count: null, items: v } : v;
+}
+
+async function askGemini(images, prompt, signal, model, careful) {
   // 1回あたりの待ち時間に上限をつけ、長すぎたら別のモデルに切り替える
+  const limit = careful ? TIMEOUT_MS.careful : TIMEOUT_MS.fast;
   const ctl = new AbortController();
   const onAbort = () => ctl.abort();
   signal.addEventListener("abort", onAbort);
-  const timer = setTimeout(() => ctl.abort(), ATTEMPT_TIMEOUT_MS);
+  const timer = setTimeout(() => ctl.abort(), limit);
   const generationConfig = { responseMimeType: "application/json", temperature: 0 };
-  // 2.5 Flash は考える時間をオフにすると速くなる（Lite はもともとオフ）
-  if (/^gemini-2\.5-flash(?!-lite)/.test(model)) generationConfig.thinkingConfig = { thinkingBudget: 0 };
+  // ふだんは 2.5 Flash の考える時間をオフにして速くする（Lite はもともとオフ）。ていねいモードでは考えさせる
+  if (!careful && /^gemini-2\.5-flash(?!-lite)/.test(model)) generationConfig.thinkingConfig = { thinkingBudget: 0 };
   let res;
   try {
     res = await gfetch(`${GEMINI_API}/models/${model}:generateContent`, {
@@ -637,12 +697,12 @@ async function askGemini(b64, prompt, signal, model) {
       signal: ctl.signal,
       headers: { "Content-Type": "application/json", "x-goog-api-key": household.geminiKey },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: "image/jpeg", data: b64 } }] }],
+        contents: [{ parts: [{ text: prompt }, ...images.map((data) => ({ inline_data: { mime_type: "image/jpeg", data } }))] }],
         generationConfig,
       }),
     });
   } catch (e) {
-    if (!signal.aborted && ctl.signal.aborted) throw new ReadError("timeout", `${model} の返事が ${ATTEMPT_TIMEOUT_MS / 1000} 秒以内に来ませんでした`);
+    if (!signal.aborted && ctl.signal.aborted) throw new ReadError("timeout", `${model} の返事が ${limit / 1000} 秒以内に来ませんでした`);
     throw e;
   } finally {
     clearTimeout(timer);
@@ -650,18 +710,50 @@ async function askGemini(b64, prompt, signal, model) {
   }
   if (!res.ok) throw errorFor(res.status, await googleError(res));
   const data = await res.json();
-  const text = (data.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("");
+  const text = (data.candidates?.[0]?.content?.parts || []).filter((p) => !p.thought).map((p) => p.text || "").join("");
   if (!text) throw new ReadError("parse", "返事が空でした " + (data.candidates?.[0]?.finishReason || data.promptFeedback?.blockReason || ""));
-  try {
-    const m = text.match(/\[[\s\S]*\]/);
-    return JSON.parse(m ? m[0] : text);
-  } catch (e) { throw new ReadError("parse", text.slice(0, 120)); }
+  return parseAnswer(text);
+}
+
+function buildPrompt(careful, photoCount) {
+  const names = items.map((i) => i.name).slice(0, 300);
+  const tags = allTags();
+  return [
+    `これはスーパーやドラッグストアなどのレシートの写真${photoCount > 1 ? `（${photoCount}枚）` : ""}です。家族の買い物メモに入れるため、買った商品を読み取ってください。`,
+    "",
+    "【読み方】",
+    "- 商品が並んでいる部分を、上から順に1行ずつ読む。半角カタカナや略した名前も読む",
+    "- 行の先頭の「※」「・」「*」「＊」などの記号（税率のしるし）は名前に含めない",
+    "- テープ・折り目・影などで隠れた部分は無理に推測しない。読めた文字から判断する",
+    photoCount > 1 ? "- 写真は1枚のレシートを分けて撮ったもの。2枚に重なって写っている行は二重に数えない" : "",
+    careful ? "- まず lines に、商品が並んでいる部分の行をすべて上から順に、レシートの文字のまま書き起こす。そのあと lines をもとに items を作る" : "",
+    "",
+    "【整理のしかた】",
+    "- 「2コX単158」「2コ×158」「×3」「3点」のような行は、すぐ上の商品の個数を表す。それ自体は商品ではない",
+    "- 「1/4」「1/2カット」「6枚」「ミニ3」「3P」「7分」「1000ml」「12R」などの大きさ・枚数・入り数・ゆで時間は個数ではない",
+    "- 値引き・割引の行（マイナスの金額、「割引」「値引」「引」「限」「◯円から◯円に致します」など）は入れない",
+    "- 小計・合計・税・ポイント・お預かり・お釣り・支払い方法・レジ袋・店名・住所・日付・レジ番号の行は入れない",
+    "- name: 何の食べ物・品物かがわかる、家庭のメモで使う短く一般的な日本語の名前。商品名・ブランド名は使わない（例: 「ナチュレ 恵」→「ヨーグルト」、「ポポロスパ7分」→「パスタ」、「旨味ひきわり ミニ3」→「納豆」、「エブリィブレッド6枚」→「食パン」、「塩銀さけ切身」→「塩鮭」、「国産若鶏モモ」→「鶏もも肉」、「エリエール トイレット12R」→「トイレットペーパー」）",
+    "- 今のリストに同じ品物があれば、name はその名前を一字一句そのまま使う。今のリスト: " + (names.length ? names.join("、") : "（まだ空）"),
+    "- product: 商品名・ブランド名（記号・大きさ・数量・値段は除く）。name と同じ・ただの品名なら空文字（例: 「ナチュレ恵」「ポポロスパ」。「白菜1/4」なら空文字）",
+    "- raw: レシートに書かれていたその商品の行の文字をそのまま（個数の行があれば続けて書く）",
+    "- qty: 買った個数（同じ商品が何行もあれば合計）",
+    "- tag: 次の中から最も合うものを1つ: " + tags.join("、"),
+    "- count: レシートの「お買上点数」「点数」「◯点」の数。書かれていなければ null",
+    "- 最後に qty の合計が count と合うか確かめ、合わなければ読み落としや数え間違いを直す",
+    "",
+    "【答え方】JSON だけで答える。例:",
+    careful
+      ? '{"lines":["※ナチュレ　恵","2コX単158 ¥316","※白菜１／４ ¥168"],"count":3,"items":[{"name":"ヨーグルト","product":"ナチュレ恵","raw":"ナチュレ 恵 2コX単158","qty":2,"tag":"乳製品・卵"},{"name":"白菜","product":"","raw":"白菜1/4","qty":1,"tag":"野菜"}]}'
+      : '{"count":3,"items":[{"name":"ヨーグルト","product":"ナチュレ恵","raw":"ナチュレ 恵 2コX単158","qty":2,"tag":"乳製品・卵"},{"name":"白菜","product":"","raw":"白菜1/4","qty":1,"tag":"野菜"}]}',
+    'レシートが写っていない、または読めないときは {"count":null,"items":[]} と答える。',
+  ].filter((l) => l !== "").join("\n");
 }
 
 function closeReceipt() {
   if (rcCtl) { rcCtl.abort(); rcCtl = null; }
   $("rcBack").hidden = true;
-  if (rcPreviewUrl) { URL.revokeObjectURL(rcPreviewUrl); rcPreviewUrl = null; }
+  revokeUrls();
 }
 $("rcBack").addEventListener("click", (e) => { if (e.target === $("rcBack") && !rcCtl) closeReceipt(); });
 
@@ -671,10 +763,10 @@ function showRetry(title, msg, detail) {
     (detail ? `<p class="hint" style="margin-top:8px">くわしい内容: ${esc(detail)}</p>` : "");
   $("rcActions").innerHTML = `<button class="btn" type="button" id="rcClose">閉じる</button><button class="btn primary" type="button" id="rcRetry">撮り直す</button>`;
   $("rcClose").onclick = closeReceipt;
-  $("rcRetry").onclick = () => { closeReceipt(); $("pickBack").hidden = false; };
+  $("rcRetry").onclick = () => { closeReceipt(); staged = []; $("pickBack").hidden = false; };
 }
 
-async function readReceipt(file) {
+async function readReceipt(files, careful) {
   if (!household.geminiKey) {
     $("rcTitle").textContent = "読み取りの準備がまだです";
     $("rcBody").innerHTML = `<p class="hint" style="font-size:.95rem;color:var(--ink)">レシートを読み取るには、右上の歯車 →「レシート読み取り」でキーを1回だけ入れてください。</p>`;
@@ -684,37 +776,26 @@ async function readReceipt(file) {
     $("rcBack").hidden = false;
     return;
   }
-  rcPreviewUrl = URL.createObjectURL(file);
-  $("rcTitle").textContent = "レシートを読み取っています";
-  $("rcBody").innerHTML = `<div class="reading"><img class="preview" src="${rcPreviewUrl}" alt="撮影したレシート"><div style="display:flex;gap:10px;align-items:center"><span class="spinner"></span><span id="rcStatus">買ったものを探しています…</span></div></div>`;
+  rcFiles = files;
+  $("rcTitle").textContent = careful ? "ていねいに読み直しています" : "レシートを読み取っています";
+  $("rcBody").innerHTML = `<div class="reading">${thumbs(files)}<div style="display:flex;gap:10px;align-items:center"><span class="spinner"></span><span id="rcStatus">${careful ? "レシートの文字を1行ずつ書き起こしています。30秒ほどかかります…" : "買ったものを探しています…"}</span></div></div>`;
   $("rcActions").innerHTML = `<button class="btn" type="button" id="rcStop" style="grid-column:1/-1">中止する</button>`;
   $("rcStop").onclick = closeReceipt;
   $("rcBack").hidden = false;
 
-  const names = items.map((i) => i.name).slice(0, 300);
   const tags = allTags();
-  const prompt = [
-    "これはスーパーやドラッグストアなどのレシートの写真です。家族の買い物メモに入れるため、買った商品を読み取ってください。",
-    "ルール:",
-    "- 合計・小計・税・値引き・割引・ポイント・お預かり・お釣り・支払い方法・レジ袋・店名などの行は入れない",
-    "- 商品名は、家庭の買い物メモで使う短く一般的な日本語の名前にする（例: 「国産トマト」→「トマト」、「明治おいしい牛乳1000ml」→「牛乳」、「エリエール トイレット12R」→「トイレットペーパー」）",
-    "- 今のリストに同じものがあれば、その名前を一字一句そのまま使う。今のリスト: " + (names.length ? names.join("、") : "（まだ空）"),
-    "- qty は買った個数。数量欄（「2コ」「×3」「2点」など）があればその数、なければ1。同じ商品が複数行あれば合計する",
-    "- tag は次の中から最も合うものを1つ: " + tags.join("、"),
-    '答えは JSON の配列だけ。例: [{"name":"トマト","qty":3,"tag":"野菜"},{"name":"牛乳","qty":1,"tag":"乳製品・卵"}]',
-    "レシートが写っていない、または読めないときは [] と答える。",
-  ].join("\n");
-
+  const prompt = buildPrompt(careful, files.length);
   const ctl = new AbortController();
   rcCtl = ctl;
   try {
-    const [b64, models] = await Promise.all([
-      shrink(file),
+    const [images, ranked] = await Promise.all([
+      Promise.all(files.map(shrink)),
       rankedModels(household.geminiKey).catch((e) => { if (e.code === "key") throw e; return MODEL_PREFS; }),
     ]);
+    const models = careful ? [...CAREFUL_PREFS.filter((n) => ranked.includes(n)), ...ranked.filter((n) => !CAREFUL_PREFS.includes(n))] : ranked;
     let out, lastErr;
     for (const model of models.slice(0, 4)) {
-      try { out = await askGemini(b64, prompt, ctl.signal, model); lastErr = null; break; }
+      try { out = await askGemini(images, prompt, ctl.signal, model, careful); lastErr = null; break; }
       catch (e) {
         if (ctl.signal.aborted || !(e instanceof ReadError) || !SWITCHABLE.includes(e.code)) throw e;
         lastErr = e;
@@ -726,17 +807,27 @@ async function readReceipt(file) {
     if (ctl.signal.aborted) return;
     rcCtl = null;
     const merged = new Map();
-    for (const r of Array.isArray(out) ? out : []) {
+    for (const r of Array.isArray(out.items) ? out.items : []) {
       const name = String(r && r.name || "").trim();
       if (!name) continue;
       const qty = Math.max(1, Math.round(Number(r.qty) || 1));
       const tag = tags.includes(r.tag) ? r.tag : "その他";
+      const product = String(r.product || "").trim();
+      const raw = String(r.raw || "").trim();
       const key = norm(name);
-      if (merged.has(key)) merged.get(key).qty += qty;
-      else merged.set(key, { name, qty, tag, on: true });
+      if (merged.has(key)) {
+        const m = merged.get(key);
+        m.qty += qty;
+        if (raw) m.raw = m.raw ? m.raw + " ／ " + raw : raw;
+        if (product && !m.products.includes(product)) m.products.push(product);
+      } else {
+        merged.set(key, { name, qty, tag, raw, products: product && norm(product) !== key ? [product] : [], on: true });
+      }
     }
     rcRows = [...merged.values()];
-    showReceiptResult();
+    const c = Math.round(Number(out.count));
+    rcCount = Number.isFinite(c) && c > 0 ? c : null;
+    showReceiptResult(careful);
   } catch (e) {
     if (ctl.signal.aborted) return;
     rcCtl = null;
@@ -758,18 +849,38 @@ function rcBadge(r) {
   const hit = items.find((i) => norm(i.name) === norm(r.name));
   return hit ? `<span class="badge merge">リストの${qtyOf(hit)}個に＋${r.qty}</span>` : `<span class="badge">新しく追加</span>`;
 }
-function showReceiptResult() {
+// レシートの点数と、読み取った個数の合計を見くらべる
+function paintCount() {
+  const el = $("rcCountInfo");
+  if (!el) return;
+  const sum = rcRows.reduce((s, r) => s + r.qty, 0);
+  const ok = rcCount != null && sum === rcCount;
+  el.className = "countinfo " + (rcCount == null ? "" : ok ? "ok" : "ng");
+  el.innerHTML = rcCount == null
+    ? `読み取り ${sum}個（レシートに点数が見つかりませんでした）`
+    : ok ? `レシート ${rcCount}点 ／ 読み取り ${sum}個　一致しています`
+         : `レシート ${rcCount}点 ／ 読み取り ${sum}個　数が合いません。読み落としがないか確かめてください`;
+  const again = $("rcAgain");
+  if (again) again.classList.toggle("primary", rcCount != null && !ok);
+}
+function showReceiptResult(careful) {
   if (!rcRows.length) { showRetry("商品が見つかりませんでした", "レシート全体がまっすぐ写るように撮り直してください。"); return; }
   const tags = allTags();
   $("rcTitle").textContent = "読み取った商品";
-  $("rcBody").innerHTML = `<p class="hint" style="margin-bottom:10px">名前・個数・タグを直せます。入れないものはチェックを外してください。</p>
+  $("rcBody").innerHTML = `<p class="countinfo" id="rcCountInfo"></p>
+    <p class="hint" style="margin:8px 0 10px">名前・個数・タグを直せます。入れないものはチェックを外してください。</p>
     <div class="slip"><div class="head">RECEIPT ・ ${rcRows.length}品</div>` +
     rcRows.map((r, i) => `<div class="rline${r.on ? "" : " off"}" data-i="${i}">
       <input type="checkbox" ${r.on ? "checked" : ""} aria-label="${esc(r.name)}を追加する" data-k="on">
       <input class="rname" type="text" value="${esc(r.name)}" aria-label="商品名" data-k="name">
       <div class="stepper"><button type="button" data-k="dec" aria-label="1つ減らす">−</button><span class="qty">${r.qty}</span><button type="button" data-k="inc" aria-label="1つ増やす">＋</button></div>
+      ${r.raw ? `<div class="rraw">レシート: ${esc(r.raw)}</div>` : ""}
       <div class="rmeta"><select data-k="tag" aria-label="タグ">${tags.map((t) => `<option${t === r.tag ? " selected" : ""}>${esc(t)}</option>`).join("")}</select><span class="rb">${rcBadge(r)}</span></div>
-    </div>`).join("") + `</div>`;
+    </div>`).join("") + `</div>` +
+    (careful ? "" : `<button class="btn" type="button" id="rcAgain" style="width:100%;margin-top:12px">ていねいに読み直す（30秒ほど）</button>`);
+  const again = $("rcAgain");
+  if (again) again.onclick = () => readReceipt(rcFiles, true);
+  paintCount();
   paintRcActions();
 }
 function paintRcActions() {
@@ -792,13 +903,14 @@ $("rcBody").addEventListener("click", (e) => {
   r.qty = Math.max(1, r.qty + (b.dataset.k === "inc" ? 1 : -1));
   line.querySelector(".qty").textContent = r.qty;
   line.querySelector(".rb").innerHTML = rcBadge(r);
+  paintCount();
 });
 async function applyReceipt() {
   const rows = rcRows.filter((r) => r.on && r.name.trim());
   $("rcApply").disabled = true; $("rcApply").textContent = "入れています…";
   let added = 0, merged = 0, failed = 0;
   for (const r of rows) {
-    try { (await addOrMerge(r.name.trim(), r.qty, r.tag)) === "merged" ? merged++ : added++; }
+    try { (await addOrMerge(r.name.trim(), r.qty, r.tag, r.products)) === "merged" ? merged++ : added++; }
     catch (e) { failed++; }
   }
   closeReceipt();
