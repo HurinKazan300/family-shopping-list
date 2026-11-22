@@ -53,17 +53,21 @@ body {
   padding-block: 0 calc(96px + env(safe-area-inset-bottom, 0px));
   -webkit-tap-highlight-color: transparent;
 }
+html, body { overflow-x: clip; }
 body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
 .wrap { max-width: 640px; margin: 0 auto; }
 button, input, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-.top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); padding-block: 14px 8px; display: grid; gap: 10px; }
+.top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); padding-block: 14px 8px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+/* 横にスクロールするタグの列などが、画面の幅を押し広げないようにする */
+.top > *, .list > *, #toolbar { min-width: 0; }
 .brand { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.brand h1 { margin: 0; font-family: var(--f-display); font-weight: 500; font-size: 1.45rem; letter-spacing: .02em; }
-.brand .side { display: flex; align-items: center; gap: 6px; }
-.brand .sum { color: var(--muted); font-size: .85rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.brand .ttl { min-width: 0; display: grid; }
+.brand h1 { margin: 0; font-family: var(--f-display); font-weight: 500; font-size: clamp(1.15rem, 5.4vw, 1.45rem); letter-spacing: .02em; line-height: 1.25; }
+.brand .side { flex: none; display: flex; align-items: center; gap: 6px; }
+.brand .sum { color: var(--muted); font-size: .8rem; font-variant-numeric: tabular-nums; }
 .iconbtn { width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface); display: grid; place-items: center; }
 .iconbtn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .search { position: relative; }
@@ -72,7 +76,7 @@ button { cursor: pointer; }
 .search input::placeholder { color: var(--muted); }
 .search .clear { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 32px; height: 32px; border: 0; border-radius: 50%; background: transparent; color: var(--muted); font-size: 1.1rem; }
 
-.tagbar { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; }
+.tagbar { display: flex; gap: 8px; max-width: 100%; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; }
 .tagbar::-webkit-scrollbar { display: none; }
 .chip { flex: none; display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); font-size: .88rem; white-space: nowrap; }
 .chip .n { color: var(--muted); font-variant-numeric: tabular-nums; font-size: .8rem; }
@@ -207,9 +211,11 @@ mark { background: var(--accent-soft); color: inherit; border-radius: 3px; }
 <div class="wrap">
   <header class="top">
     <div class="brand">
-      <h1>わが家の買い物メモ</h1>
-      <div class="side">
+      <div class="ttl">
+        <h1>わが家の買い物メモ</h1>
         <span class="sum" id="sum"></span>
+      </div>
+      <div class="side">
         <button class="iconbtn" id="histBtn" type="button" aria-label="買い物の履歴" hidden>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg>
         </button>
