@@ -1,0 +1,12 @@
+{
+  "name": "わが家の買い物メモ",
+  "short_name": "買い物メモ",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f3f5f1",
+  "theme_color": "#2e6a4e",
+  "lang": "ja",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

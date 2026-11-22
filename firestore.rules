@@ -1,0 +1,14 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 家族ごとのリスト。招待リンクに入っている長いID（households/{hid}）を知っている人だけが読み書きできる。
+    // households の一覧を取ること（list）は誰にも許さない。
+    match /households/{hid} {
+      allow get, create, update: if request.auth != null && hid.size() >= 20;
+
+      match /items/{itemId} {
+        allow read, write: if request.auth != null && hid.size() >= 20;
+      }
+    }
+  }
+}
