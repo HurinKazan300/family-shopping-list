@@ -56,6 +56,18 @@
 アプリを開いて Chrome 右上の「︙」→「ホーム画面に追加」（または「アプリをインストール」）。
 アプリのように1タップで開けるようになる。
 
+## GitHub から「Secrets detected（Google API Key）」の警告が来たら
+`config.js` の Firebase の `apiKey` を見つけたという自動の警告。Firebase のウェブ用キーは公開前提のもので、
+アプリを動かすためにブラウザへ必ず送られるため、消しても隠せない（消すとアプリが動かなくなる）。
+代わりに、キーを使える場所をこのアプリだけに制限しておく:
+
+1. https://console.cloud.google.com/apis/credentials?project=family-shopping-486c7 →「Browser key (auto created by Firebase)」
+2. アプリケーションの制限:「ウェブサイト」→ `https://hurinkazan300.github.io/*` と `https://family-shopping-486c7.firebaseapp.com/*` を追加して保存
+3. GitHub の警告は「Close as」→「Won't fix」（理由: 公開前提の Firebase キー・ウェブサイト制限済み）で閉じる
+
+リストのデータは `firestore.rules` で守られている（招待リンクの ID を知らないと読めない）。
+Gemini のキーはリポジトリには入れず、アプリの設定から入れる（家族のリストの中に保存される）。
+
 ## 注意
 - 招待リンクを知っている人は誰でもリストを見たり書いたりできる。家族以外には送らない。
 - レシート読み取りのキーは家族のリストの中に保存される（リポジトリには入らない）。
