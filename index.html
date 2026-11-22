@@ -475,7 +475,7 @@ function toast(msg, action) {
     el.append(b);
   }
   el.hidden = false;
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => { el.hidden = true; }, action ? 5000 : 2600);
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { el.hidden = true; }, action ? 5000 : Math.max(2600, msg.length * 110));
 }
 function notice(html) { $("notice").innerHTML = html || ""; $("notice").hidden = !html; }
 
@@ -745,9 +745,32 @@ function renderPriceInto(box, name) {
   pick(h.length - 1);
 }
 
+// 履歴を読み込む。読めなかったとき（ルールが古いなど）は、履歴を開いたときに読み込み直す
+let purchasesUnsub = null, purchasesErr = "";
+function subscribePurchases() {
+  if (purchasesUnsub) purchasesUnsub();
+  purchasesErr = "";
+  purchasesUnsub = onSnapshot(collection(hhDoc, "purchases"), (snap) => {
+    purchases = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    purchasesErr = "";
+    if (!$("histBack").hidden) renderHistory();
+  }, (e) => {
+    purchasesErr = (e && e.code) || "error";
+    purchasesUnsub = null;
+    if (!$("histBack").hidden) renderHistory();
+  });
+}
+
 let histView = null;   // null = レシートの一覧、文字列 = その品物の値段
 function renderHistory() {
   const box = $("histList");
+  if (purchasesErr && !histView) {
+    $("histTitle").textContent = "買い物の履歴";
+    box.innerHTML = `<div class="empty"><strong>履歴を読み込めませんでした</strong>${purchasesErr === "permission-denied"
+      ? "データベースのルールに「purchases」の行が入っていないようです。Firebase の「ルール」タブを更新して「公開」してから、もう一度開いてください。"
+      : "電波を確認して、もう一度開いてください。"}<br><small>（${esc(purchasesErr)}）</small></div>`;
+    return;
+  }
   if (histView) {
     $("histTitle").textContent = `${histView} の値段`;
     box.innerHTML = `<button class="linkbtn" type="button" id="histBackList">← 履歴の一覧にもどる</button><div class="field" id="histPrice" style="margin-top:12px"></div>`;
@@ -770,7 +793,10 @@ function renderHistory() {
       `</tbody></table></div><button class="linkbtn danger" type="button" data-del="${esc(p.id)}">この履歴を削除</button></div></details>`;
   }).join("");
 }
-$("histBtn").addEventListener("click", () => { histView = null; renderHistory(); $("histBack").hidden = false; });
+$("histBtn").addEventListener("click", () => {
+  if (purchasesErr || !purchasesUnsub) subscribePurchases();
+  histView = null; renderHistory(); $("histBack").hidden = false;
+});
 $("histClose").addEventListener("click", () => { $("histBack").hidden = true; });
 $("histBack").addEventListener("click", (e) => { if (e.target === $("histBack")) $("histBack").hidden = true; });
 $("histList").addEventListener("click", (e) => {
@@ -1160,21 +1186,32 @@ async function applyReceipt() {
   const rows = rcRows.filter((r) => r.on && r.name.trim());
   $("rcApply").disabled = true; $("rcApply").textContent = "入れています…";
   // 買い物の履歴（お店・日付・項目名・金額）を残す
-  addDoc(collection(hhDoc, "purchases"), {
+  const histSave = addDoc(collection(hhDoc, "purchases"), {
     store: rcStore.trim(),
     date: /^\d{4}-\d{2}-\d{2}$/.test(rcDate) ? rcDate : todayStr(),
     lines: rows.map((r) => ({ name: r.name.trim(), product: (r.products || []).join("・"), qty: r.qty, price: r.price || 0 })),
     createdAt: serverTimestamp(),
     createdMs: Date.now(),
-  }).catch(() => toast("履歴を保存できませんでした（データベースのルールを確認してください）"));
+  }).then(() => "ok", (e) => (e && e.code === "permission-denied") ? "denied" : "error");
   let added = 0, merged = 0, failed = 0;
   for (const r of rows) {
     try { (await addOrMerge(r.name.trim(), r.qty, r.tag, r.products)) === "merged" ? merged++ : added++; }
     catch (e) { failed++; }
   }
+  // 履歴が保存できたかを待って、結果も一緒に知らせる（電波が悪いときは8秒で先に進む）
+  const hist = await Promise.race([histSave, new Promise((r) => setTimeout(() => r("pending"), 8000))]);
   closeReceipt();
   render();
-  toast(failed ? `${added + merged}件を入れました（${failed}件は保存できませんでした）` : `新しく${added}件、個数の追加${merged}件を入れました`);
+  const listMsg = failed ? `${added + merged}件を入れました（${failed}件は保存できませんでした）` : `新しく${added}件、個数の追加${merged}件を入れました`;
+  const histMsg = {
+    ok: "履歴にも残しました",
+    denied: "履歴は保存できませんでした。データベースのルールを更新してください",
+    error: "履歴は保存できませんでした",
+    pending: "履歴は電波が戻ったら保存されます",
+  }[hist];
+  if (hist === "denied") notice("買い物の履歴を保存できませんでした。Firebase の「ルール」タブに purchases の行を入れて「公開」してください。");
+  if (hist === "ok" && purchasesErr) subscribePurchases();
+  toast(`${listMsg}。${histMsg}`);
 }
 
 /* ---------- 起動 ---------- */
@@ -1212,10 +1249,7 @@ function openHousehold(id, isNew) {
     household.geminiKey = d.geminiKey || "";
     household.geminiModel = d.geminiModel || "";
   }, () => {});
-  onSnapshot(collection(hhDoc, "purchases"), (snap) => {
-    purchases = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-    if (!$("histBack").hidden) renderHistory();
-  }, () => {});
+  subscribePurchases();
   onSnapshot(itemsCol, (snap) => {
     items = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((r) => r.name);
     loaded = true;
