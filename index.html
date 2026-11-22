@@ -639,15 +639,26 @@ $("stageGallery").addEventListener("click", () => { $("stageBack").hidden = true
 $("stageCancel").addEventListener("click", () => { staged = []; closeStaged(); });
 $("stageRead").addEventListener("click", () => { const f = staged; staged = []; closeStaged(); readReceipt(f, false); });
 
-// 送る前に約150万画素の JPEG に縮める（細長いレシートでも文字が読める大きさを保ちつつ、通信量と待ち時間を減らす）
+// カメラの写真は横倒しの画素に「向き」の情報（EXIF）が付いているので、その向きに直して読み込む
+async function loadUpright(file) {
+  try { return await createImageBitmap(file, { imageOrientation: "from-image" }); }
+  catch (e) {
+    const url = URL.createObjectURL(file);
+    try { const img = new Image(); img.src = url; await img.decode(); return img; }
+    finally { URL.revokeObjectURL(url); }
+  }
+}
+
+// 送る前に約250万画素の JPEG に縮める（まわりまで写ったカメラ写真でもレシートの文字が読める大きさを保ちつつ、通信量を抑える）
 async function shrink(file) {
-  const bmp = await createImageBitmap(file);
-  const scale = Math.min(1, Math.sqrt(1500000 / (bmp.width * bmp.height)), 2400 / Math.max(bmp.width, bmp.height));
+  const bmp = await loadUpright(file);
+  const w = bmp.naturalWidth || bmp.width, h = bmp.naturalHeight || bmp.height;
+  const scale = Math.min(1, Math.sqrt(2500000 / (w * h)), 3000 / Math.max(w, h));
   const c = document.createElement("canvas");
-  c.width = Math.round(bmp.width * scale); c.height = Math.round(bmp.height * scale);
+  c.width = Math.round(w * scale); c.height = Math.round(h * scale);
   c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
   bmp.close && bmp.close();
-  const blob = await new Promise((res) => c.toBlob(res, "image/jpeg", 0.8));
+  const blob = await new Promise((res) => c.toBlob(res, "image/jpeg", 0.85));
   const buf = new Uint8Array(await blob.arrayBuffer());
   let bin = ""; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
   return btoa(bin);
