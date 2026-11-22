@@ -564,15 +564,15 @@ for (const id of ["cameraInput", "galleryInput"]) {
   });
 }
 
-// 送る前に長い辺 1600px の JPEG に縮める（通信量と待ち時間を減らす）
+// 送る前に約150万画素の JPEG に縮める（細長いレシートでも文字が読める大きさを保ちつつ、通信量と待ち時間を減らす）
 async function shrink(file) {
   const bmp = await createImageBitmap(file);
-  const scale = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+  const scale = Math.min(1, Math.sqrt(1500000 / (bmp.width * bmp.height)), 2400 / Math.max(bmp.width, bmp.height));
   const c = document.createElement("canvas");
   c.width = Math.round(bmp.width * scale); c.height = Math.round(bmp.height * scale);
   c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
   bmp.close && bmp.close();
-  const blob = await new Promise((res) => c.toBlob(res, "image/jpeg", 0.85));
+  const blob = await new Promise((res) => c.toBlob(res, "image/jpeg", 0.8));
   const buf = new Uint8Array(await blob.arrayBuffer());
   let bin = ""; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
   return btoa(bin);
@@ -581,7 +581,9 @@ async function shrink(file) {
 class ReadError extends Error { constructor(code, detail) { super(code); this.code = code; this.detail = detail || ""; } }
 
 const GEMINI_API = "https://generativelanguage.googleapis.com/v1beta";
-const MODEL_PREFS = [GEMINI_MODEL, "gemini-flash-latest", "gemini-2.5-flash", "gemini-2.0-flash"];
+// 速い順。混み合って断られたら次のモデルで読み直す
+const MODEL_PREFS = [...new Set([GEMINI_MODEL, "gemini-flash-lite-latest", "gemini-2.5-flash-lite", "gemini-flash-latest", "gemini-2.5-flash", "gemini-2.0-flash"])];
+const ATTEMPT_TIMEOUT_MS = 25000;
 
 async function googleError(res) {
   try { const j = await res.json(); return `${res.status} ${j.error?.status || ""} ${j.error?.message || ""}`.trim(); }
@@ -591,37 +593,61 @@ function errorFor(status, detail) {
   if (status === 401 || status === 403 || (status === 400 && /api.?key/i.test(detail))) return new ReadError("key", detail);
   if (status === 404) return new ReadError("model", detail);
   if (status === 429) return new ReadError("rate", detail);
+  if (status >= 500) return new ReadError("busy", detail);
   return new ReadError("server", detail);
 }
+// 別のモデルに切り替えれば通る見込みがあるエラー（無料枠の回数はモデルごと）
+const SWITCHABLE = ["model", "rate", "busy", "timeout"];
 async function gfetch(url, opts) {
   try { return await fetch(url, opts); }
   catch (e) { if (opts && opts.signal && opts.signal.aborted) throw e; throw new ReadError("network", String(e && e.message || e)); }
 }
 
-// このキーで使える Gemini のモデルを探す（モデル名が変わっても動くように）
-async function findModel(key) {
+// このキーで使える Gemini のモデルを、使いたい順に並べて返す（モデル名が変わっても動くように）
+let modelCache = null;
+async function rankedModels(key) {
+  if (modelCache && modelCache.key === key) return modelCache.list;
   const res = await gfetch(`${GEMINI_API}/models?pageSize=1000`, { headers: { "x-goog-api-key": key } });
   if (!res.ok) throw errorFor(res.status, await googleError(res));
   const names = ((await res.json()).models || [])
     .filter((m) => (m.supportedGenerationMethods || []).includes("generateContent"))
     .map((m) => m.name.replace(/^models\//, ""));
-  const pick = MODEL_PREFS.find((n) => names.includes(n))
-    || names.find((n) => /flash/.test(n) && !/lite|tts|image|live|audio|embed|preview|exp/.test(n))
-    || names.find((n) => /flash/.test(n));
-  if (!pick) throw new ReadError("server", "使える Gemini のモデルが見つかりません");
-  return pick;
+  const preferred = MODEL_PREFS.filter((n) => names.includes(n));
+  const others = names.filter((n) => /flash/.test(n) && !/tts|image|live|audio|embed|preview|exp/.test(n) && !preferred.includes(n));
+  const list = [...preferred, ...others];
+  if (!list.length) throw new ReadError("server", "使える Gemini のモデルが見つかりません");
+  modelCache = { key, list };
+  return list;
 }
+async function findModel(key) { return (await rankedModels(key))[0]; }
 
 async function askGemini(b64, prompt, signal, model) {
-  const res = await gfetch(`${GEMINI_API}/models/${model}:generateContent`, {
-    method: "POST",
-    signal,
-    headers: { "Content-Type": "application/json", "x-goog-api-key": household.geminiKey },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: "image/jpeg", data: b64 } }] }],
-      generationConfig: { responseMimeType: "application/json", temperature: 0 },
-    }),
-  });
+  // 1回あたりの待ち時間に上限をつけ、長すぎたら別のモデルに切り替える
+  const ctl = new AbortController();
+  const onAbort = () => ctl.abort();
+  signal.addEventListener("abort", onAbort);
+  const timer = setTimeout(() => ctl.abort(), ATTEMPT_TIMEOUT_MS);
+  const generationConfig = { responseMimeType: "application/json", temperature: 0 };
+  // 2.5 Flash は考える時間をオフにすると速くなる（Lite はもともとオフ）
+  if (/^gemini-2\.5-flash(?!-lite)/.test(model)) generationConfig.thinkingConfig = { thinkingBudget: 0 };
+  let res;
+  try {
+    res = await gfetch(`${GEMINI_API}/models/${model}:generateContent`, {
+      method: "POST",
+      signal: ctl.signal,
+      headers: { "Content-Type": "application/json", "x-goog-api-key": household.geminiKey },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: "image/jpeg", data: b64 } }] }],
+        generationConfig,
+      }),
+    });
+  } catch (e) {
+    if (!signal.aborted && ctl.signal.aborted) throw new ReadError("timeout", `${model} の返事が ${ATTEMPT_TIMEOUT_MS / 1000} 秒以内に来ませんでした`);
+    throw e;
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", onAbort);
+  }
   if (!res.ok) throw errorFor(res.status, await googleError(res));
   const data = await res.json();
   const text = (data.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("");
@@ -660,7 +686,7 @@ async function readReceipt(file) {
   }
   rcPreviewUrl = URL.createObjectURL(file);
   $("rcTitle").textContent = "レシートを読み取っています";
-  $("rcBody").innerHTML = `<div class="reading"><img class="preview" src="${rcPreviewUrl}" alt="撮影したレシート"><div style="display:flex;gap:10px;align-items:center"><span class="spinner"></span><span>買ったものを探しています。10〜30秒ほどかかります。</span></div></div>`;
+  $("rcBody").innerHTML = `<div class="reading"><img class="preview" src="${rcPreviewUrl}" alt="撮影したレシート"><div style="display:flex;gap:10px;align-items:center"><span class="spinner"></span><span id="rcStatus">買ったものを探しています…</span></div></div>`;
   $("rcActions").innerHTML = `<button class="btn" type="button" id="rcStop" style="grid-column:1/-1">中止する</button>`;
   $("rcStop").onclick = closeReceipt;
   $("rcBack").hidden = false;
@@ -682,18 +708,21 @@ async function readReceipt(file) {
   const ctl = new AbortController();
   rcCtl = ctl;
   try {
-    const b64 = await shrink(file);
-    let out;
-    try {
-      out = await askGemini(b64, prompt, ctl.signal, household.geminiModel || GEMINI_MODEL);
-    } catch (e) {
-      if (!(e instanceof ReadError) || e.code !== "model") throw e;
-      // モデル名が使えなかったので、使えるものを探してもう一度だけ試す
-      const model = await findModel(household.geminiKey);
-      household.geminiModel = model;
-      updateDoc(hhDoc, { geminiModel: model }).catch(() => {});
-      out = await askGemini(b64, prompt, ctl.signal, model);
+    const [b64, models] = await Promise.all([
+      shrink(file),
+      rankedModels(household.geminiKey).catch((e) => { if (e.code === "key") throw e; return MODEL_PREFS; }),
+    ]);
+    let out, lastErr;
+    for (const model of models.slice(0, 4)) {
+      try { out = await askGemini(b64, prompt, ctl.signal, model); lastErr = null; break; }
+      catch (e) {
+        if (ctl.signal.aborted || !(e instanceof ReadError) || !SWITCHABLE.includes(e.code)) throw e;
+        lastErr = e;
+        const st = $("rcStatus");
+        if (st) st.textContent = "混み合っているため、別の AI で読み直しています…";
+      }
     }
+    if (lastErr) throw lastErr;
     if (ctl.signal.aborted) return;
     rcCtl = null;
     const merged = new Map();
@@ -717,6 +746,8 @@ async function readReceipt(file) {
       parse: "うまく読み取れませんでした。レシート全体が写るように、明るい場所で撮り直してください。",
       server: "読み取りサービスでエラーが起きました。少し待ってからもう一度お試しください。",
       model: "読み取りに使う AI が見つかりませんでした。",
+      busy: "読み取りの AI がどれも混み合っています。少し待ってからもう一度お試しください。",
+      timeout: "読み取りに時間がかかりすぎました。少し待ってからもう一度お試しください。",
       network: "読み取りサービスにつながりませんでした。電波を確認してください。",
     }[e && e.code] || "読み取りに失敗しました。もう一度お試しください。";
     showRetry("読み取れませんでした", msg, e && (e.detail || (e.code ? "" : String(e.message || e))));
