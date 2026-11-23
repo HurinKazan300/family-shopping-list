@@ -87,7 +87,22 @@ button { cursor: pointer; }
 .notice { margin: 8px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--accent-soft); font-size: .88rem; }
 .notice button { margin-left: 6px; border: 0; background: none; color: var(--accent); font-weight: 700; text-decoration: underline; padding: 0; }
 .list { display: grid; gap: 18px; padding-top: 8px; }
-.group h2 { margin: 0 0 6px; display: flex; align-items: center; gap: 8px; font-size: .8rem; font-weight: 700; letter-spacing: .08em; color: var(--muted); }
+.ghead { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.gtoggle { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; border: 0; background: none; padding: 8px 0; text-align: left; font-size: .8rem; font-weight: 700; letter-spacing: .08em; color: var(--muted); }
+.gtoggle svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; transition: transform .15s; }
+.gtoggle .gname { color: var(--ink); }
+.gtoggle .gcount { margin-left: auto; font-weight: 500; letter-spacing: 0; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.group.closed .ghead { margin-bottom: 0; padding: 4px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); }
+.group.closed .gtoggle svg { transform: rotate(-90deg); }
+@media (prefers-reduced-motion: reduce) { .gtoggle svg { transition: none; } }
+.mover { flex: none; display: flex; gap: 6px; }
+.mover button { width: 42px; height: 42px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); display: grid; place-items: center; color: var(--ink); }
+.mover button:disabled { opacity: .3; }
+.mover svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.row .name.static { padding: 12px 0; }
+.listtools { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.minibtn { height: 32px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); font-size: .82rem; }
+.minibtn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 700; }
 .rows { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
 .row { display: flex; align-items: center; gap: 8px; min-height: 56px; padding: 6px 6px 6px 14px; border-top: 1px solid var(--line); }
 .row:first-child { border-top: 0; }
@@ -231,6 +246,10 @@ mark { background: var(--accent-soft); color: inherit; border-radius: 3px; }
         <button class="clear" id="qclear" type="button" aria-label="検索をクリア" hidden>×</button>
       </label>
       <nav class="tagbar" id="tagbar" aria-label="タグで絞り込み" style="margin-top:10px"></nav>
+      <div class="listtools">
+        <button class="minibtn" id="foldAll" type="button">すべてしまう</button>
+        <button class="minibtn" id="reorderBtn" type="button" aria-pressed="false">並べ替え</button>
+      </div>
     </div>
   </header>
   <p class="notice" id="notice" hidden></p>
@@ -374,7 +393,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/fireba
 import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
-  collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, setDoc, increment, arrayUnion, serverTimestamp,
+  collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, setDoc, increment, arrayUnion, serverTimestamp, writeBatch,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { FIREBASE_CONFIG, GEMINI_MODEL } from "./config.js";
 
@@ -405,11 +424,24 @@ let fs = null, itemsCol = null, hhDoc = null;
 
 /* ---------- 表示 ---------- */
 const qtyOf = (it) => Math.max(0, Number(it.qty) || 0);
+// タグの順番は家族で共有（household.tagOrder）。入っていないタグはうしろに並ぶ
 function allTags() {
   const used = new Set(items.map((i) => i.tag || "その他"));
   const extra = [...used].filter((t) => !DEFAULT_TAGS.includes(t)).sort((a, b) => a.localeCompare(b, "ja"));
-  return [...DEFAULT_TAGS, ...extra];
+  const base = [...DEFAULT_TAGS, ...extra];
+  const order = (household && household.tagOrder) || [];
+  return [...order.filter((t) => base.includes(t)), ...base.filter((t) => !order.includes(t))];
 }
+// 項目の順番（order）。並べ替えていない項目は名前順でうしろに並ぶ
+const byOrder = (a, b) => (a.order ?? 1e9) - (b.order ?? 1e9) || a.name.localeCompare(b.name, "ja");
+
+let reorderMode = false;
+// しまったタグはスマホごとに覚えておく
+const COLLAPSE_KEY = "family-shopping-collapsed";
+const collapsed = new Set((() => { try { return JSON.parse(lsGet(COLLAPSE_KEY) || "[]"); } catch (e) { return []; } })());
+const saveCollapsed = () => lsSet(COLLAPSE_KEY, JSON.stringify([...collapsed]));
+const ICON_UP = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg>`;
+const ICON_DOWN = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>`;
 function highlight(name) {
   if (!query) return esc(name);
   const i = name.toLowerCase().indexOf(query.toLowerCase());
@@ -448,11 +480,29 @@ function render() {
   const groups = new Map();
   for (const t of tags) groups.set(t, []);
   for (const it of visible) groups.get(it.tag || "その他").push(it);
-  $("list").innerHTML = [...groups].filter(([, rows]) => rows.length).map(([t, rows]) => {
-    rows.sort((a, b) => a.name.localeCompare(b.name, "ja"));
-    return `<section class="group"><h2><span class="dot" style="--c:${tagColor(t)}"></span>${esc(t)}</h2><div class="rows">` +
-      rows.map((it) => {
+  const shown = [...groups].filter(([, rows]) => rows.length);
+  // 検索中やタグで絞り込んでいるときは、しまったタグも開いて見せる
+  const canFold = !query && filterTag === "all";
+  const allClosed = canFold && shown.every(([t]) => collapsed.has(t));
+  $("foldAll").textContent = allClosed ? "すべて開く" : "すべてしまう";
+  $("foldAll").hidden = !canFold;
+  $("list").innerHTML = (reorderMode ? `<p class="hint">上下の矢印ボタンで順番を入れ替えます。タグの見出しの矢印で、タグごと入れ替わります。並べた順番は家族のスマホにも反映されます。終わったら「完了」を押してください。</p>` : "") +
+    shown.map(([t, rows], gi) => {
+    rows.sort(byOrder);
+    const closed = canFold && collapsed.has(t);
+    const total = rows.reduce((s, it) => s + qtyOf(it), 0);
+    const head = `<div class="ghead">
+        <button class="gtoggle" type="button" data-act="toggle" aria-expanded="${!closed}">${ICON_DOWN}<span class="dot" style="--c:${tagColor(t)}"></span><span class="gname">${esc(t)}</span><span class="gcount">${rows.length}項目・${total}個</span></button>
+        ${reorderMode ? `<div class="mover"><button type="button" data-act="tagup" aria-label="${esc(t)}を上へ" ${gi === 0 ? "disabled" : ""}>${ICON_UP}</button><button type="button" data-act="tagdown" aria-label="${esc(t)}を下へ" ${gi === shown.length - 1 ? "disabled" : ""}>${ICON_DOWN}</button></div>` : ""}
+      </div>`;
+    if (closed) return `<section class="group closed" data-tag="${esc(t)}">${head}</section>`;
+    return `<section class="group" data-tag="${esc(t)}">${head}<div class="rows">` +
+      rows.map((it, ri) => {
         const q = qtyOf(it);
+        if (reorderMode) {
+          return `<div class="row" data-id="${esc(it.id)}"><span class="name static">${esc(it.name)}</span>
+            <div class="mover"><button type="button" data-act="up" aria-label="${esc(it.name)}を上へ" ${ri === 0 ? "disabled" : ""}>${ICON_UP}</button><button type="button" data-act="down" aria-label="${esc(it.name)}を下へ" ${ri === rows.length - 1 ? "disabled" : ""}>${ICON_DOWN}</button></div></div>`;
+        }
         return `<div class="row${q === 0 ? " zero" : ""}" data-id="${esc(it.id)}">
           <button class="name" type="button" data-act="edit"><span>${highlight(it.name)}</span>${(it.brands || []).length ? `<em class="brand">${esc(it.brands.slice(-2).join("・"))}</em>` : ""}${q === 0 ? "<small>なくなりました</small>" : ""}</button>
           <div class="stepper">
@@ -520,14 +570,59 @@ function removeItem(it) {
   });
 }
 
+// 同じタグの中で1つ上・下と入れ替え、順番（order）を0から振り直す
+function moveItem(id, dir) {
+  const it = items.find((i) => i.id === id);
+  if (!it) return;
+  const t = it.tag || "その他";
+  const group = items.filter((i) => (i.tag || "その他") === t).sort(byOrder);
+  const i = group.findIndex((g) => g.id === id), j = i + dir;
+  if (j < 0 || j >= group.length) return;
+  [group[i], group[j]] = [group[j], group[i]];
+  const b = writeBatch(fs);
+  group.forEach((g, k) => { if (g.order !== k) b.update(doc(itemsCol, g.id), { order: k }); });
+  b.commit().catch(() => toast("並べ替えを保存できませんでした。電波を確認してください"));
+}
+// 項目のあるタグの中で、1つ上・下のタグと入れ替える
+function moveTag(t, dir) {
+  const used = new Set(items.map((i) => i.tag || "その他"));
+  const all = allTags();
+  const shownTags = all.filter((x) => used.has(x));
+  const nb = shownTags[shownTags.indexOf(t) + dir];
+  if (nb === undefined) return;
+  const a = all.indexOf(t), b = all.indexOf(nb);
+  [all[a], all[b]] = [all[b], all[a]];
+  household.tagOrder = all;
+  render();
+  setDoc(hhDoc, { tagOrder: all }, { merge: true }).catch(() => toast("並べ替えを保存できませんでした。電波を確認してください"));
+}
+
 $("list").addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-act]");
   if (!btn) return;
+  const act = btn.dataset.act;
+  const tag = btn.closest(".group") && btn.closest(".group").dataset.tag;
+  if (act === "toggle") { collapsed.has(tag) ? collapsed.delete(tag) : collapsed.add(tag); saveCollapsed(); render(); return; }
+  if (act === "tagup" || act === "tagdown") { moveTag(tag, act === "tagup" ? -1 : 1); return; }
   const id = btn.closest(".row").dataset.id;
-  if (btn.dataset.act === "inc") bump(id, 1);
-  else if (btn.dataset.act === "dec") bump(id, -1);
-  else if (btn.dataset.act === "del") removeItem(items.find((i) => i.id === id));
-  else if (btn.dataset.act === "edit") openEdit(items.find((i) => i.id === id));
+  if (act === "inc") bump(id, 1);
+  else if (act === "dec") bump(id, -1);
+  else if (act === "up" || act === "down") moveItem(id, act === "up" ? -1 : 1);
+  else if (act === "del") removeItem(items.find((i) => i.id === id));
+  else if (act === "edit") openEdit(items.find((i) => i.id === id));
+});
+$("foldAll").addEventListener("click", () => {
+  const used = [...new Set(items.map((i) => i.tag || "その他"))];
+  if (used.every((t) => collapsed.has(t))) collapsed.clear(); else used.forEach((t) => collapsed.add(t));
+  saveCollapsed(); render();
+});
+$("reorderBtn").addEventListener("click", () => {
+  reorderMode = !reorderMode;
+  if (reorderMode) { filterTag = "all"; query = ""; $("q").value = ""; $("qclear").hidden = true; }
+  $("reorderBtn").textContent = reorderMode ? "完了" : "並べ替え";
+  $("reorderBtn").setAttribute("aria-pressed", String(reorderMode));
+  $("dock").hidden = reorderMode;
+  render();
 });
 $("tagbar").addEventListener("click", (e) => {
   const c = e.target.closest(".chip");
@@ -1281,6 +1376,8 @@ function openHousehold(id, isNew) {
     const d = snap.data() || {};
     household.geminiKey = d.geminiKey || "";
     household.geminiModel = d.geminiModel || "";
+    household.tagOrder = Array.isArray(d.tagOrder) ? d.tagOrder : [];
+    if (loaded) render();
   }, () => {});
   subscribePurchases();
   onSnapshot(itemsCol, (snap) => {
